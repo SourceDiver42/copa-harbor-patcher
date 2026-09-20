@@ -1,0 +1,23 @@
+expose:
+  type: nodePort
+  tls:
+    enabled: true
+    certSource: auto
+    auto:
+      commonName: "harbor.test"
+  nodePort:
+    ports:
+      https:
+        nodePort: 30003
+      http:
+        nodePort: 30002
+
+externalURL: https://harbor.test:30003
+
+harborAdminPassword: "Harbor12345"
+
+persistence:
+  enabled: false
+
+trivy:
+  enabled: true

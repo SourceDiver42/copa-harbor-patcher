@@ -1,0 +1,12 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: copa-harbor-test
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30003
+        hostPort: 30003
+        protocol: TCP
+      - containerPort: 30002
+        hostPort: 30002
+        protocol: TCP

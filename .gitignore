@@ -1,0 +1,4 @@
+test/kind/robot-credentials.env
+test/kind/harbor-ca.crt
+test/kind/before.json
+test/kind/after.json
