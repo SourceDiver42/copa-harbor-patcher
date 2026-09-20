@@ -1,0 +1,17 @@
+{{- if or (eq .Values.mode "cronjob") (eq .Values.mode "both") }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "copa-harbor.fullname" . }}-reports
+  labels:
+    {{- include "copa-harbor.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if .Values.cronjob.reportsVolume.storageClassName }}
+  storageClassName: {{ .Values.cronjob.reportsVolume.storageClassName | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.cronjob.reportsVolume.size }}
+{{- end }}

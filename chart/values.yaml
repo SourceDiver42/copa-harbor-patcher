@@ -1,0 +1,89 @@
+# mode selects which workload(s) this release runs: cronjob | webhook | both
+mode: cronjob
+
+image:
+  repository: copa-harbor-patcher
+  tag: ""            # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+
+serviceAccount:
+  create: true
+  name: ""
+
+harbor:
+  # Host[:port] of the Harbor registry, no scheme (e.g. "harbor.example.com").
+  # Used for bulk.yaml's target.registry and the pushed docker-config secret.
+  registry: ""
+  # Base URL of Harbor's Core API, e.g. "https://harbor.example.com". Defaults
+  # to "https://<harbor.registry>" if left empty.
+  apiBase: ""
+
+  # Robot account credentials, supplied directly (see README for the
+  # tradeoffs of this vs. existingCredentialsSecret before pointing this at
+  # a real production Harbor). Needs pull+push+list on the target project,
+  # since skip-detection does a live tag-list call even for images it ends
+  # up skipping.
+  credentials:
+    username: ""
+    password: ""
+  existingCredentialsSecret: ""   # kubernetes.io/dockerconfigjson secret name; overrides credentials above
+
+  # Test-cluster escape hatch: skip TLS verification against Harbor's API
+  # entirely (does not affect registry pull/push TLS, only harbor-report's
+  # HTTP client). Never enable against a real Harbor.
+  insecureSkipVerify: false
+
+buildkit:
+  # Left empty, the image defaults based on `rootless`:
+  # moby/buildkit:v0.31.1 (rootful) or moby/buildkit:v0.31.1-rootless.
+  image: ""
+  # Rootful (privileged: true) by default: broader blast radius than
+  # rootless, but has no dependency on unprivileged user namespaces being
+  # enabled at the kernel level — which several hardened distros (e.g. Talos)
+  # disable by default, breaking rootless outright. Set to true only on
+  # clusters you've confirmed support it (see README).
+  rootless: false
+  resources: {}
+
+patch:
+  # Per-job timeout passed to `copa patch --timeout`.
+  timeout: 20m
+
+cronjob:
+  schedule: "0 2 * * *"
+  # Literal PatchConfig YAML (apiVersion: copa.sh/v1alpha1, kind: PatchConfig).
+  # See copacetic's bulk-image-patching docs for the full schema.
+  bulkConfig: |
+    apiVersion: copa.sh/v1alpha1
+    kind: PatchConfig
+    target:
+      registry: ""
+    images: []
+  reportsVolume:
+    storageClassName: ""
+    size: 5Gi
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid
+
+webhook:
+  replicaCount: 1
+  service:
+    port: 8443
+  existingSecret: ""    # secret with key `token`; overrides sharedSecret below
+  sharedSecret: ""       # if empty and existingSecret unset, chart generates one on install
+  ingress:
+    enabled: false
+    className: ""
+    hosts: []
+    tls: []
+
+resources: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Mounted on both the main (copa/webhook) container and the buildkitd
+# sidecar — e.g. for a trust-manager-managed CA bundle ConfigMap.
+extraVolumes: []
+extraVolumeMounts: []

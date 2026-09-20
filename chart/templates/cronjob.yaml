@@ -1,0 +1,71 @@
+{{- if or (eq .Values.mode "cronjob") (eq .Values.mode "both") }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "copa-harbor.fullname" . }}
+  labels:
+    {{- include "copa-harbor.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.cronjob.schedule | quote }}
+  concurrencyPolicy: {{ .Values.cronjob.concurrencyPolicy }}
+  successfulJobsHistoryLimit: {{ .Values.cronjob.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.cronjob.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            {{- include "copa-harbor.selectorLabels" . | nindent 12 }}
+        spec:
+          serviceAccountName: {{ include "copa-harbor.serviceAccountName" . }}
+          automountServiceAccountToken: false
+          restartPolicy: OnFailure
+          securityContext:
+            {{- include "copa-harbor.podSecurityContext" . | nindent 12 }}
+          {{- with .Values.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          # buildkitd runs as a Kubernetes "native sidecar" (initContainers
+          # entry with restartPolicy: Always) rather than a regular
+          # container — a Job only completes once every *regular* container
+          # exits, and buildkitd never exits on its own, so placing it under
+          # `containers:` would leave the pod running forever even after
+          # copa finishes successfully.
+          initContainers:
+            {{- include "copa-harbor.buildkitSidecar" (merge (dict "nativeSidecar" true) .) | nindent 12 }}
+          containers:
+            - name: copa
+              image: {{ include "copa-harbor.image" . }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              args: ["sweep"]
+              securityContext:
+                {{- include "copa-harbor.mainSecurityContext" . | nindent 16 }}
+              env:
+                {{- include "copa-harbor.commonEnv" . | nindent 16 }}
+              resources:
+                {{- toYaml .Values.resources | nindent 16 }}
+              volumeMounts:
+                {{- include "copa-harbor.commonVolumeMounts" . | nindent 16 }}
+                - name: bulk-config
+                  mountPath: /etc/copa
+                  readOnly: true
+                - name: reports
+                  mountPath: /data/reports
+          volumes:
+            {{- include "copa-harbor.sharedVolumes" . | nindent 12 }}
+            - name: bulk-config
+              configMap:
+                name: {{ include "copa-harbor.fullname" . }}-bulk-config
+            - name: reports
+              persistentVolumeClaim:
+                claimName: {{ include "copa-harbor.fullname" . }}-reports
+{{- end }}

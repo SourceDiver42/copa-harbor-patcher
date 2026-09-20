@@ -1,0 +1,19 @@
+copa-harbor-patcher installed (mode: {{ .Values.mode }}).
+
+{{- if or (eq .Values.mode "cronjob") (eq .Values.mode "both") }}
+
+CronJob "{{ include "copa-harbor.fullname" . }}" is scheduled: {{ .Values.cronjob.schedule }}
+Trigger it manually:
+  kubectl create job --from=cronjob/{{ include "copa-harbor.fullname" . }} -n {{ .Release.Namespace }} manual-run-1
+{{- end }}
+
+{{- if or (eq .Values.mode "webhook") (eq .Values.mode "both") }}
+
+Webhook receiver is listening on Service "{{ include "copa-harbor.fullname" . }}-webhook" port {{ .Values.webhook.service.port }}.
+{{- if not .Values.webhook.existingSecret }}
+Fetch the shared secret to configure as Harbor's webhook policy "Auth Header" (Authorization: Bearer <token>):
+  kubectl get secret {{ include "copa-harbor.webhookSecretName" . }} -n {{ .Release.Namespace }} -o jsonpath='{.data.token}' | base64 -d; echo
+{{- end }}
+{{- end }}
+
+See this chart's README for the full setup (Harbor project/robot-account permissions, CA cert wiring, and the verify-at-install-time notes on Harbor API behavior).

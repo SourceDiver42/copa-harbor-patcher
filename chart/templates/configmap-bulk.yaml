@@ -1,0 +1,11 @@
+{{- if or (eq .Values.mode "cronjob") (eq .Values.mode "both") }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "copa-harbor.fullname" . }}-bulk-config
+  labels:
+    {{- include "copa-harbor.labels" . | nindent 4 }}
+data:
+  bulk.yaml: |
+    {{- .Values.cronjob.bulkConfig | nindent 4 }}
+{{- end }}

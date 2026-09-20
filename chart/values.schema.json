@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["mode", "image", "harbor"],
+  "properties": {
+    "mode": {
+      "type": "string",
+      "enum": ["cronjob", "webhook", "both"]
+    },
+    "image": {
+      "type": "object",
+      "required": ["repository"],
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 }
+      }
+    },
+    "harbor": {
+      "type": "object",
+      "required": ["registry"],
+      "properties": {
+        "registry": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

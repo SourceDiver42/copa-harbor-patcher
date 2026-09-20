@@ -1,0 +1,72 @@
+{{- if or (eq .Values.mode "webhook") (eq .Values.mode "both") }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "copa-harbor.fullname" . }}-webhook
+  labels:
+    {{- include "copa-harbor.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.webhook.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "copa-harbor.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: webhook
+  template:
+    metadata:
+      labels:
+        {{- include "copa-harbor.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: webhook
+    spec:
+      serviceAccountName: {{ include "copa-harbor.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "copa-harbor.podSecurityContext" . | nindent 8 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: webhook
+          image: {{ include "copa-harbor.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["webhook"]
+          securityContext:
+            {{- include "copa-harbor.mainSecurityContext" . | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.webhook.service.port }}
+          env:
+            {{- include "copa-harbor.commonEnv" . | nindent 12 }}
+            - name: WEBHOOK_ADDR
+              value: {{ printf ":%d" (.Values.webhook.service.port | int) | quote }}
+            - name: WEBHOOK_SHARED_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "copa-harbor.webhookSecretName" . }}
+                  key: token
+            - name: HARBOR_REGISTRY_HOST
+              value: {{ .Values.harbor.registry | quote }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            {{- include "copa-harbor.commonVolumeMounts" . | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+        {{- include "copa-harbor.buildkitSidecar" . | nindent 8 }}
+      volumes:
+        {{- include "copa-harbor.sharedVolumes" . | nindent 8 }}
+{{- end }}

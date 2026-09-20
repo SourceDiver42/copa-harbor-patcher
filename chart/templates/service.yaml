@@ -1,0 +1,16 @@
+{{- if or (eq .Values.mode "webhook") (eq .Values.mode "both") }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "copa-harbor.fullname" . }}-webhook
+  labels:
+    {{- include "copa-harbor.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "copa-harbor.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: webhook
+  ports:
+    - name: http
+      port: {{ .Values.webhook.service.port }}
+      targetPort: http
+{{- end }}
