@@ -17,9 +17,6 @@ permissions:
   contents: read
   packages: write
 
-env:
-  IMAGE: ghcr.io/${{ github.repository_owner }}/copa-harbor-patcher
-
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -46,6 +43,15 @@ jobs:
             --set harbor.credentials.username=robot\$test \
             --set harbor.credentials.password=secret
 
+      - name: Compute lowercase image/chart refs
+        # GHCR requires lowercase repository paths; github.repository_owner
+        # isn't necessarily lowercase (it's the account name as typed).
+        id: vars
+        run: |
+          owner="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          echo "image=ghcr.io/${owner}/copa-harbor-patcher" >> "$GITHUB_OUTPUT"
+          echo "chart_repo=oci://ghcr.io/${owner}/charts" >> "$GITHUB_OUTPUT"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -61,7 +67,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.IMAGE }}
+          images: ${{ steps.vars.outputs.image }}
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
@@ -82,3 +88,16 @@ jobs:
             ${{ inputs.copa_version && format('COPA_VERSION={0}', inputs.copa_version) || '' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Chart publishing only happens on an actual version tag (a deliberate
+      # release), not on every push to master — an OCI tag is meant to be a
+      # specific version, not a constantly-overwritten moving target.
+      - name: Package and push chart
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          helm package ./chart --version "$version" --app-version "$version" -d ./dist
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io \
+            --username "${{ github.actor }}" --password-stdin
+          helm push "./dist/copa-harbor-patcher-${version}.tgz" "${{ steps.vars.outputs.chart_repo }}"

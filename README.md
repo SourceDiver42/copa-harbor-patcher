@@ -30,8 +30,23 @@ rootless](#buildkit-rootful-vs-rootless) for why.
 
 ## Quickstart
 
+From a checkout:
+
 ```bash
 helm install copa-harbor ./chart \
+  --set harbor.registry=harbor.example.com \
+  --set harbor.credentials.username='robot$library+copa-patcher' \
+  --set harbor.credentials.password='...' \
+  --set-file cronjob.bulkConfig=./bulk.yaml
+```
+
+Or directly from the OCI chart published by CI on each `v*` tag (no
+checkout needed — note new GHCR packages default to private, so make the
+`charts/copa-harbor-patcher` package public in its GitHub package settings
+first if you want `helm install` to work without `helm registry login`):
+
+```bash
+helm install copa-harbor oci://ghcr.io/sourcediver42/charts/copa-harbor-patcher --version 0.1.0 \
   --set harbor.registry=harbor.example.com \
   --set harbor.credentials.username='robot$library+copa-patcher' \
   --set harbor.credentials.password='...' \
