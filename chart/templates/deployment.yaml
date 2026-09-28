@@ -52,8 +52,6 @@ spec:
                 secretKeyRef:
                   name: {{ include "copa-harbor.webhookSecretName" . }}
                   key: token
-            - name: HARBOR_REGISTRY_HOST
-              value: {{ .Values.harbor.registry | quote }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:

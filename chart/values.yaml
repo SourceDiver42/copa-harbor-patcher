@@ -19,14 +19,31 @@ harbor:
   apiBase: ""
 
   # Robot account credentials, supplied directly (see README for the
-  # tradeoffs of this vs. existingCredentialsSecret before pointing this at
-  # a real production Harbor). Needs pull+push+list on the target project,
-  # since skip-detection does a live tag-list call even for images it ends
-  # up skipping.
+  # tradeoffs of this vs. existingSecret before pointing this at a real
+  # production Harbor). Needs pull+push+list on the target project, since
+  # skip-detection does a live tag-list call even for images it ends up
+  # skipping. When set, the chart renders an Opaque secret holding these
+  # values (plus the registry url); the docker config.json used for registry
+  # auth is generated from them at container startup, not baked into the
+  # secret.
   credentials:
     username: ""
     password: ""
-  existingCredentialsSecret: ""   # kubernetes.io/dockerconfigjson secret name; overrides credentials above
+
+  # Use a pre-existing secret (e.g. from External Secrets Operator or
+  # sealed-secrets) instead of harbor.credentials. It only needs plaintext
+  # username + password keys — and, optionally, a url (registry host) key.
+  # It does NOT need a precomputed .dockerconfigjson: the docker config.json
+  # is inferred from these keys at container startup. Overrides
+  # harbor.credentials above.
+  existingSecret: ""
+  # Key names to read from existingSecret. Leave url empty ("") if the secret
+  # carries no registry-host key — the container then falls back to
+  # harbor.registry for the docker-config auth host.
+  existingSecretKeys:
+    username: username
+    password: password
+    url: url
 
   # Test-cluster escape hatch: skip TLS verification against Harbor's API
   # entirely (does not affect registry pull/push TLS, only harbor-report's

@@ -52,6 +52,7 @@ COPY --from=tools-builder /out/sweep-helper /usr/local/bin/sweep-helper
 COPY --from=tools-builder /out/harbor-report /usr/local/bin/harbor-report
 COPY scripts/sweep.sh /usr/local/bin/sweep.sh
 COPY scripts/patch-one.sh /usr/local/bin/patch-one.sh
+COPY scripts/render-docker-config.sh /usr/local/bin/render-docker-config.sh
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/*.sh \
     && addgroup -g 1000 copa && adduser -D -u 1000 -G copa copa

@@ -44,7 +44,40 @@ moby/buildkit:v0.31.1
 {{- end -}}
 
 {{- define "copa-harbor.registrySecretName" -}}
-{{- .Values.harbor.existingCredentialsSecret | default (printf "%s-registry-creds" (include "copa-harbor.fullname" .)) -}}
+{{- .Values.harbor.existingSecret | default (printf "%s-registry-creds" (include "copa-harbor.fullname" .)) -}}
+{{- end -}}
+
+{{/*
+Key names to read the registry username/password/url from. For the
+chart-managed secret these are fixed; for an existingSecret they come from
+harbor.existingSecretKeys so the chart can consume a secret with whatever
+key names the operator's tooling already produces.
+*/}}
+{{- define "copa-harbor.registryUsernameKey" -}}
+{{- if .Values.harbor.existingSecret -}}
+{{- .Values.harbor.existingSecretKeys.username | default "username" -}}
+{{- else -}}
+username
+{{- end -}}
+{{- end -}}
+
+{{- define "copa-harbor.registryPasswordKey" -}}
+{{- if .Values.harbor.existingSecret -}}
+{{- .Values.harbor.existingSecretKeys.password | default "password" -}}
+{{- else -}}
+password
+{{- end -}}
+{{- end -}}
+
+{{/*
+Whether the registry host should be read from the credentials secret's url
+key at runtime (only for an existingSecret that declares a non-empty url
+key). When false, HARBOR_REGISTRY_HOST is the literal harbor.registry.
+*/}}
+{{- define "copa-harbor.registryUrlFromSecret" -}}
+{{- if and .Values.harbor.existingSecret .Values.harbor.existingSecretKeys.url -}}
+true
+{{- end -}}
 {{- end -}}
 
 {{- define "copa-harbor.webhookSecretName" -}}
@@ -211,12 +244,12 @@ as usual with `nativeSidecar` unset.
 {{- define "copa-harbor.sharedVolumes" -}}
 - name: buildkitd-socket
   emptyDir: {}
+# The registry docker config.json is not mounted from the secret — it's
+# generated into this emptyDir at container startup from the username /
+# password / url env vars (see entrypoint.sh), so an existingSecret only
+# needs those plain keys, not a precomputed .dockerconfigjson.
 - name: docker-config
-  secret:
-    secretName: {{ include "copa-harbor.registrySecretName" . }}
-    items:
-      - key: .dockerconfigjson
-        path: config.json
+  emptyDir: {}
 - name: scratch
   emptyDir: {}
 {{- with .Values.extraVolumes }}
@@ -238,12 +271,26 @@ caller owns the `env:` key so it can add container-specific vars too.
   valueFrom:
     secretKeyRef:
       name: {{ include "copa-harbor.registrySecretName" . }}
-      key: username
+      key: {{ include "copa-harbor.registryUsernameKey" . }}
 - name: HARBOR_PASSWORD
   valueFrom:
     secretKeyRef:
       name: {{ include "copa-harbor.registrySecretName" . }}
-      key: password
+      key: {{ include "copa-harbor.registryPasswordKey" . }}
+# Registry host used to build the docker config.json auth entry at startup
+# (and by the webhook receiver to reconstruct refs). Defaults to the literal
+# harbor.registry; when an existingSecret declares a url key, that overrides
+# it (optional, so a secret without the key just falls back to this literal).
+- name: HARBOR_REGISTRY_HOST
+  value: {{ .Values.harbor.registry | quote }}
+{{- if include "copa-harbor.registryUrlFromSecret" . | eq "true" }}
+- name: HARBOR_REGISTRY_HOST_OVERRIDE
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "copa-harbor.registrySecretName" . }}
+      key: {{ .Values.harbor.existingSecretKeys.url }}
+      optional: true
+{{- end }}
 - name: HARBOR_INSECURE_SKIP_VERIFY
   value: {{ .Values.harbor.insecureSkipVerify | quote }}
 - name: PATCH_TIMEOUT
@@ -258,9 +305,10 @@ container-specific mounts too.
 {{- define "copa-harbor.commonVolumeMounts" -}}
 - name: buildkitd-socket
   mountPath: /run/buildkit
+# Writable: entrypoint.sh renders config.json here at startup (see the
+# docker-config emptyDir in sharedVolumes).
 - name: docker-config
   mountPath: /etc/copa/docker
-  readOnly: true
 - name: scratch
   mountPath: /tmp
 {{- with .Values.extraVolumeMounts }}

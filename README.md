@@ -40,10 +40,26 @@ helm install copa-harbor ./chart \
   --set-file cronjob.bulkConfig=./bulk.yaml
 ```
 
-Or directly from the OCI chart published by CI on each `v*` tag (no
-checkout needed — note new GHCR packages default to private, so make the
-`charts/copa-harbor-patcher` package public in its GitHub package settings
-first if you want `helm install` to work without `helm registry login`):
+Or install a published chart without a checkout. CI publishes each `v*` tag
+two ways:
+
+**HTTP Helm repo** (classic `helm repo add`, GitHub Pages — no OCI-capable
+Helm or registry login needed):
+
+```bash
+helm repo add copa-harbor https://sourcediver42.github.io/copa-harbor-patcher
+helm repo update
+helm install copa-harbor copa-harbor/copa-harbor-patcher --version 0.1.0 \
+  --set harbor.registry=harbor.example.com \
+  --set harbor.credentials.username='robot$library+copa-patcher' \
+  --set harbor.credentials.password='...' \
+  --set-file cronjob.bulkConfig=./bulk.yaml
+```
+
+**OCI artifact** (GHCR — note new GHCR packages default to private, so make
+the `charts/copa-harbor-patcher` package public in its GitHub package
+settings first if you want `helm install` to work without `helm registry
+login`):
 
 ```bash
 helm install copa-harbor oci://ghcr.io/sourcediver42/charts/copa-harbor-patcher --version 0.1.0 \
@@ -52,6 +68,33 @@ helm install copa-harbor oci://ghcr.io/sourcediver42/charts/copa-harbor-patcher 
   --set harbor.credentials.password='...' \
   --set-file cronjob.bulkConfig=./bulk.yaml
 ```
+
+### Using an existing credentials secret
+
+Instead of passing `harbor.credentials.*` (which lands in Helm's release
+Secret), point the chart at a secret you manage out-of-band — e.g. one
+produced by External Secrets Operator or sealed-secrets. It only needs
+**plaintext `username` and `password` keys**, plus an optional `url`
+(registry host) key. It does **not** need a precomputed `.dockerconfigjson`:
+the docker `config.json` copa/BuildKit use for registry auth is generated
+from those keys at container startup.
+
+```bash
+kubectl create secret generic my-harbor-creds \
+  --from-literal=username='robot$library+copa-patcher' \
+  --from-literal=password='...' \
+  --from-literal=url='harbor.example.com'
+
+helm install copa-harbor ./chart \
+  --set harbor.registry=harbor.example.com \
+  --set harbor.existingSecret=my-harbor-creds \
+  --set-file cronjob.bulkConfig=./bulk.yaml
+```
+
+If your secret uses different key names, override them via
+`harbor.existingSecretKeys.{username,password,url}`. If it has no
+registry-host key, set `harbor.existingSecretKeys.url=""` — the container
+then uses `harbor.registry` as the docker-config auth host.
 
 ### Required Harbor robot account permissions
 
@@ -76,7 +119,9 @@ See `chart/values.yaml` for the full set with comments. Key ones:
 | `mode` | `cronjob` \| `webhook` \| `both` |
 | `harbor.registry` | `host[:port]`, no scheme — used for `bulk.yaml`'s `target.registry` and the pushed docker-config secret |
 | `harbor.apiBase` | Harbor Core API base URL; defaults to `https://<harbor.registry>` |
-| `harbor.credentials.{username,password}` | Robot account, templated into a `dockerconfigjson` Secret. Keep the values file with real credentials out of git — `--set`/`-f` values land in Helm's in-cluster release Secret (base64, not encrypted), acceptable for a throwaway test robot account but worth a harder look (External Secrets Operator, sealed-secrets, etc.) before pointing this at production Harbor. |
+| `harbor.credentials.{username,password}` | Robot account, templated into an Opaque Secret (username/password/url); the docker `config.json` is generated from it at container startup. Keep the values file with real credentials out of git — `--set`/`-f` values land in Helm's in-cluster release Secret (base64, not encrypted), acceptable for a throwaway test robot account but worth a harder look (External Secrets Operator, sealed-secrets, etc.) before pointing this at production Harbor. |
+| `harbor.existingSecret` | Name of a pre-existing secret with plaintext `username`/`password` (+ optional `url`) keys, used instead of `harbor.credentials`. No `.dockerconfigjson` required — it's inferred at startup. See [Using an existing credentials secret](#using-an-existing-credentials-secret). |
+| `harbor.existingSecretKeys.{username,password,url}` | Key names to read from `harbor.existingSecret`. Default `username`/`password`/`url`; set `url` to `""` if the secret has no registry-host key (falls back to `harbor.registry`). |
 | `buildkit.rootless` | `false` (default) or `true` — see below |
 | `cronjob.bulkConfig` | The `PatchConfig` YAML, embedded directly (not sensitive) |
 | `webhook.sharedSecret` / `webhook.existingSecret` | Bearer token Harbor's webhook policy must send as its "Auth Header"; auto-generated on install if left unset |

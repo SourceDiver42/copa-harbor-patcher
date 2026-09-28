@@ -2,6 +2,16 @@
 set -euo pipefail
 
 case "${1:-}" in
+  sweep|webhook|patch-one)
+    # Generate the registry docker config.json from the credential env vars
+    # before handing off. In webhook mode this runs once at container start;
+    # the config persists in the shared emptyDir for the patch-one.sh calls
+    # webhook-server spawns later.
+    /usr/local/bin/render-docker-config.sh
+    ;;
+esac
+
+case "${1:-}" in
   sweep)
     exec /usr/local/bin/sweep.sh
     ;;
