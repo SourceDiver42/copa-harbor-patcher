@@ -14,7 +14,10 @@ on:
         type: string
 
 permissions:
-  contents: read
+  # contents: write is needed to push the packaged chart + index.yaml to the
+  # gh-pages branch that serves the HTTP Helm repo (see "Publish chart to
+  # GitHub Pages" below).
+  contents: write
   packages: write
 
 jobs:
@@ -101,3 +104,44 @@ jobs:
           echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io \
             --username "${{ github.actor }}" --password-stdin
           helm push "./dist/copa-harbor-patcher-${version}.tgz" "${{ steps.vars.outputs.chart_repo }}"
+
+      # Also publish the same tarball to a classic HTTP Helm repo hosted on
+      # the gh-pages branch, so users can `helm repo add` over plain HTTPS
+      # without needing an OCI-capable Helm or a registry login. Reuses the
+      # ./dist tarball packaged by the step above.
+      - name: Publish chart to GitHub Pages (HTTP Helm repo)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          owner="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          repo_name="${GITHUB_REPOSITORY#*/}"
+          pages_url="https://${owner}.github.io/${repo_name}"
+          remote="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          # Check out (or create) the gh-pages branch in a scratch worktree so
+          # we can merge into any existing index.yaml rather than clobbering
+          # previously published versions.
+          work="$(mktemp -d)"
+          if git ls-remote --exit-code "$remote" gh-pages >/dev/null 2>&1; then
+            git clone --depth 1 --branch gh-pages --single-branch "$remote" "$work"
+          else
+            git clone --depth 1 "$remote" "$work"
+            git -C "$work" checkout --orphan gh-pages
+            git -C "$work" rm -rf . >/dev/null 2>&1 || true
+          fi
+
+          cp "./dist/copa-harbor-patcher-${version}.tgz" "$work/"
+          merge=()
+          [ -f "$work/index.yaml" ] && merge=(--merge "$work/index.yaml")
+          helm repo index ./dist --url "$pages_url" "${merge[@]}"
+          cp ./dist/index.yaml "$work/index.yaml"
+
+          git -C "$work" add -A
+          git -C "$work" -c user.name='github-actions[bot]' \
+            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -m "Publish copa-harbor-patcher ${version} to HTTP Helm repo"
+          git -C "$work" push origin gh-pages
+          echo "Published to ${pages_url} (enable GitHub Pages on the gh-pages branch if not already)"
