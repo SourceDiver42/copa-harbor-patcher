@@ -24,9 +24,9 @@ kubectl delete pod trivycheck --ignore-not-found=true --force --grace-period=0 >
 kubectl run trivycheck --restart=Never --image=aquasec/trivy:0.73.0 --command -- sh -c "sleep 3600" >/dev/null
 kubectl wait --for=condition=Ready pod/trivycheck --timeout=60s >/dev/null
 
-# Adjust these two refs to match your bulk.yaml's source/target.
-SOURCE_REF="${SOURCE_REF:?set SOURCE_REF to the source image, e.g. harbor.test:30003/library/python-seed:3.7-alpine}"
-PATCHED_REF="${PATCHED_REF:?set PATCHED_REF to the patched image, e.g. harbor.test:30003/library/python-seed:3.7-alpine-patched}"
+# Defaults match 04b + 05 (cyberchef); override to match a different bulk.yaml.
+SOURCE_REF="${SOURCE_REF:-harbor.test:30003/library/cyberchef:latest}"
+PATCHED_REF="${PATCHED_REF:-harbor.test:30003/library/cyberchef:latest-patched}"
 
 kubectl exec trivycheck -- trivy image --skip-version-check --scanners vuln -f json -o /tmp/before.json --insecure "$SOURCE_REF"
 kubectl exec trivycheck -- trivy image --skip-version-check --scanners vuln -f json -o /tmp/after.json --insecure "$PATCHED_REF"

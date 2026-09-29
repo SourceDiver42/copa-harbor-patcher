@@ -2,15 +2,29 @@
 mode: cronjob
 
 image:
-  repository: copa-harbor-patcher
+  # Published by this repo's CI to GHCR. Override for a private mirror or a
+  # locally-loaded dev image (see test/kind, which sets image.pullPolicy=Never).
+  repository: ghcr.io/sourcediver42/copa-harbor-patcher
   tag: ""            # defaults to .Chart.AppVersion
   pullPolicy: IfNotPresent
+
+# Pull secrets for the image above — needed if you keep the GHCR package
+# private. Each entry is a name of an existing docker-registry secret, e.g.
+# imagePullSecrets: [{name: ghcr-creds}].
+imagePullSecrets: []
 
 serviceAccount:
   create: true
   name: ""
 
-harbor:
+# Extra labels/annotations applied to every workload's pod template (the
+# CronJob's jobTemplate pod and the webhook Deployment pod).
+podLabels: {}
+podAnnotations: {}
+
+# Registry this patcher operates against (the Harbor server). Renamed from
+# `harbor` — update your values files if upgrading from <0.3.0.
+harborserver:
   # Host[:port] of the Harbor registry, no scheme (e.g. "harbor.example.com").
   # Used for bulk.yaml's target.registry and the pushed docker-config secret.
   registry: ""

@@ -40,30 +40,30 @@ moby/buildkit:v0.31.1
 {{- end -}}
 
 {{- define "copa-harbor.harborAPIBase" -}}
-{{- .Values.harbor.apiBase | default (printf "https://%s" .Values.harbor.registry) -}}
+{{- .Values.harborserver.apiBase | default (printf "https://%s" .Values.harborserver.registry) -}}
 {{- end -}}
 
 {{- define "copa-harbor.registrySecretName" -}}
-{{- .Values.harbor.existingSecret | default (printf "%s-registry-creds" (include "copa-harbor.fullname" .)) -}}
+{{- .Values.harborserver.existingSecret | default (printf "%s-registry-creds" (include "copa-harbor.fullname" .)) -}}
 {{- end -}}
 
 {{/*
 Key names to read the registry username/password/url from. For the
 chart-managed secret these are fixed; for an existingSecret they come from
-harbor.existingSecretKeys so the chart can consume a secret with whatever
-key names the operator's tooling already produces.
+harborserver.existingSecretKeys so the chart can consume a secret with
+whatever key names the operator's tooling already produces.
 */}}
 {{- define "copa-harbor.registryUsernameKey" -}}
-{{- if .Values.harbor.existingSecret -}}
-{{- .Values.harbor.existingSecretKeys.username | default "username" -}}
+{{- if .Values.harborserver.existingSecret -}}
+{{- .Values.harborserver.existingSecretKeys.username | default "username" -}}
 {{- else -}}
 username
 {{- end -}}
 {{- end -}}
 
 {{- define "copa-harbor.registryPasswordKey" -}}
-{{- if .Values.harbor.existingSecret -}}
-{{- .Values.harbor.existingSecretKeys.password | default "password" -}}
+{{- if .Values.harborserver.existingSecret -}}
+{{- .Values.harborserver.existingSecretKeys.password | default "password" -}}
 {{- else -}}
 password
 {{- end -}}
@@ -72,10 +72,10 @@ password
 {{/*
 Whether the registry host should be read from the credentials secret's url
 key at runtime (only for an existingSecret that declares a non-empty url
-key). When false, HARBOR_REGISTRY_HOST is the literal harbor.registry.
+key). When false, HARBOR_REGISTRY_HOST is the literal harborserver.registry.
 */}}
 {{- define "copa-harbor.registryUrlFromSecret" -}}
-{{- if and .Values.harbor.existingSecret .Values.harbor.existingSecretKeys.url -}}
+{{- if and .Values.harborserver.existingSecret .Values.harborserver.existingSecretKeys.url -}}
 true
 {{- end -}}
 {{- end -}}
@@ -282,17 +282,17 @@ caller owns the `env:` key so it can add container-specific vars too.
 # harbor.registry; when an existingSecret declares a url key, that overrides
 # it (optional, so a secret without the key just falls back to this literal).
 - name: HARBOR_REGISTRY_HOST
-  value: {{ .Values.harbor.registry | quote }}
+  value: {{ .Values.harborserver.registry | quote }}
 {{- if include "copa-harbor.registryUrlFromSecret" . | eq "true" }}
 - name: HARBOR_REGISTRY_HOST_OVERRIDE
   valueFrom:
     secretKeyRef:
       name: {{ include "copa-harbor.registrySecretName" . }}
-      key: {{ .Values.harbor.existingSecretKeys.url }}
+      key: {{ .Values.harborserver.existingSecretKeys.url }}
       optional: true
 {{- end }}
 - name: HARBOR_INSECURE_SKIP_VERIFY
-  value: {{ .Values.harbor.insecureSkipVerify | quote }}
+  value: {{ .Values.harborserver.insecureSkipVerify | quote }}
 - name: PATCH_TIMEOUT
   value: {{ .Values.patch.timeout | quote }}
 {{- end -}}

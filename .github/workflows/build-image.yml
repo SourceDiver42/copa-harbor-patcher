@@ -42,9 +42,9 @@ jobs:
       - name: Helm lint
         run: |
           helm lint ./chart \
-            --set harbor.registry=harbor.example.com \
-            --set harbor.credentials.username=robot\$test \
-            --set harbor.credentials.password=secret
+            --set harborserver.registry=harbor.example.com \
+            --set harborserver.credentials.username=robot\$test \
+            --set harborserver.credentials.password=secret
 
       - name: Compute lowercase image/chart refs
         # GHCR requires lowercase repository paths; github.repository_owner
