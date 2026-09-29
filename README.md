@@ -34,9 +34,9 @@ From a checkout:
 
 ```bash
 helm install copa-harbor ./chart \
-  --set harbor.registry=harbor.example.com \
-  --set harbor.credentials.username='robot$library+copa-patcher' \
-  --set harbor.credentials.password='...' \
+  --set harborserver.registry=harbor.example.com \
+  --set harborserver.credentials.username='robot$library+copa-patcher' \
+  --set harborserver.credentials.password='...' \
   --set-file cronjob.bulkConfig=./bulk.yaml
 ```
 
@@ -50,9 +50,9 @@ Helm or registry login needed):
 helm repo add copa-harbor https://sourcediver42.github.io/copa-harbor-patcher
 helm repo update
 helm install copa-harbor copa-harbor/copa-harbor-patcher --version 0.1.0 \
-  --set harbor.registry=harbor.example.com \
-  --set harbor.credentials.username='robot$library+copa-patcher' \
-  --set harbor.credentials.password='...' \
+  --set harborserver.registry=harbor.example.com \
+  --set harborserver.credentials.username='robot$library+copa-patcher' \
+  --set harborserver.credentials.password='...' \
   --set-file cronjob.bulkConfig=./bulk.yaml
 ```
 
@@ -63,15 +63,15 @@ login`):
 
 ```bash
 helm install copa-harbor oci://ghcr.io/sourcediver42/charts/copa-harbor-patcher --version 0.1.0 \
-  --set harbor.registry=harbor.example.com \
-  --set harbor.credentials.username='robot$library+copa-patcher' \
-  --set harbor.credentials.password='...' \
+  --set harborserver.registry=harbor.example.com \
+  --set harborserver.credentials.username='robot$library+copa-patcher' \
+  --set harborserver.credentials.password='...' \
   --set-file cronjob.bulkConfig=./bulk.yaml
 ```
 
 ### Using an existing credentials secret
 
-Instead of passing `harbor.credentials.*` (which lands in Helm's release
+Instead of passing `harborserver.credentials.*` (which lands in Helm's release
 Secret), point the chart at a secret you manage out-of-band — e.g. one
 produced by External Secrets Operator or sealed-secrets. It only needs
 **plaintext `username` and `password` keys**, plus an optional `url`
@@ -86,15 +86,15 @@ kubectl create secret generic my-harbor-creds \
   --from-literal=url='harbor.example.com'
 
 helm install copa-harbor ./chart \
-  --set harbor.registry=harbor.example.com \
-  --set harbor.existingSecret=my-harbor-creds \
+  --set harborserver.registry=harbor.example.com \
+  --set harborserver.existingSecret=my-harbor-creds \
   --set-file cronjob.bulkConfig=./bulk.yaml
 ```
 
 If your secret uses different key names, override them via
-`harbor.existingSecretKeys.{username,password,url}`. If it has no
-registry-host key, set `harbor.existingSecretKeys.url=""` — the container
-then uses `harbor.registry` as the docker-config auth host.
+`harborserver.existingSecretKeys.{username,password,url}`. If it has no
+registry-host key, set `harborserver.existingSecretKeys.url=""` — the container
+then uses `harborserver.registry` as the docker-config auth host.
 
 ### Required Harbor robot account permissions
 
@@ -112,16 +112,23 @@ every run re-patches everything).
 
 ## Values reference
 
+> **Upgrading from ≤0.2.0:** the top-level `harbor:` values key was renamed
+> to `harborserver:` (to avoid confusion with the Harbor chart/product).
+> Update your values files and `--set harbor.*` flags to `harborserver.*`.
+
 See `chart/values.yaml` for the full set with comments. Key ones:
 
 | Value | Purpose |
 |---|---|
 | `mode` | `cronjob` \| `webhook` \| `both` |
-| `harbor.registry` | `host[:port]`, no scheme — used for `bulk.yaml`'s `target.registry` and the pushed docker-config secret |
-| `harbor.apiBase` | Harbor Core API base URL; defaults to `https://<harbor.registry>` |
-| `harbor.credentials.{username,password}` | Robot account, templated into an Opaque Secret (username/password/url); the docker `config.json` is generated from it at container startup. Keep the values file with real credentials out of git — `--set`/`-f` values land in Helm's in-cluster release Secret (base64, not encrypted), acceptable for a throwaway test robot account but worth a harder look (External Secrets Operator, sealed-secrets, etc.) before pointing this at production Harbor. |
-| `harbor.existingSecret` | Name of a pre-existing secret with plaintext `username`/`password` (+ optional `url`) keys, used instead of `harbor.credentials`. No `.dockerconfigjson` required — it's inferred at startup. See [Using an existing credentials secret](#using-an-existing-credentials-secret). |
-| `harbor.existingSecretKeys.{username,password,url}` | Key names to read from `harbor.existingSecret`. Default `username`/`password`/`url`; set `url` to `""` if the secret has no registry-host key (falls back to `harbor.registry`). |
+| `image.repository` | Container image; defaults to `ghcr.io/sourcediver42/copa-harbor-patcher` (this repo's CI-published image) |
+| `imagePullSecrets` | List of `{name: <secret>}` pull secrets, for a private GHCR package |
+| `podLabels` / `podAnnotations` | Extra labels/annotations applied to every workload's pod template |
+| `harborserver.registry` | `host[:port]`, no scheme — used for `bulk.yaml`'s `target.registry` and the pushed docker-config secret |
+| `harborserver.apiBase` | Harbor Core API base URL; defaults to `https://<harborserver.registry>` |
+| `harborserver.credentials.{username,password}` | Robot account, templated into an Opaque Secret (username/password/url); the docker `config.json` is generated from it at container startup. Keep the values file with real credentials out of git — `--set`/`-f` values land in Helm's in-cluster release Secret (base64, not encrypted), acceptable for a throwaway test robot account but worth a harder look (External Secrets Operator, sealed-secrets, etc.) before pointing this at production Harbor. |
+| `harborserver.existingSecret` | Name of a pre-existing secret with plaintext `username`/`password` (+ optional `url`) keys, used instead of `harborserver.credentials`. No `.dockerconfigjson` required — it's inferred at startup. See [Using an existing credentials secret](#using-an-existing-credentials-secret). |
+| `harborserver.existingSecretKeys.{username,password,url}` | Key names to read from `harborserver.existingSecret`. Default `username`/`password`/`url`; set `url` to `""` if the secret has no registry-host key (falls back to `harborserver.registry`). |
 | `buildkit.rootless` | `false` (default) or `true` — see below |
 | `cronjob.bulkConfig` | The `PatchConfig` YAML, embedded directly (not sensitive) |
 | `webhook.sharedSecret` / `webhook.existingSecret` | Bearer token Harbor's webhook policy must send as its "Auth Header"; auto-generated on install if left unset |
@@ -215,7 +222,7 @@ kubectl label ns <namespace> pod-security.kubernetes.io/enforce=privileged
   it. Also verify what header name and format your Harbor version actually
   sends its configured webhook "Auth Header" as.
 - **DNS**: if your cluster's node/upstream DNS has search domains configured
-  (`ndots` defaults to 5), a short `harbor.registry` hostname gets tried
+  (`ndots` defaults to 5), a short `harborserver.registry` hostname gets tried
   against every search domain *before* being tried as an absolute name. On a
   cluster whose search-domain DNS happens to answer for that exact
   search-suffixed query (e.g. a wildcard record), this can silently resolve
@@ -224,6 +231,6 @@ kubectl label ns <namespace> pod-security.kubernetes.io/enforce=privileged
   by default (a real Harbor hostname is unlikely to collide in practice); if
   you hit it, the fix is `dnsConfig.options: [{name: ndots, value: "1"}]` on
   the pod, or just use a hostname with enough dots that this doesn't apply.
-- The values-driven credentials path (`harbor.credentials.*`) is the
+- The values-driven credentials path (`harborserver.credentials.*`) is the
   supported default for this project's own testing; see the values-reference
   note above before using it against a real production Harbor.

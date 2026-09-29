@@ -16,9 +16,20 @@ spec:
         metadata:
           labels:
             {{- include "copa-harbor.selectorLabels" . | nindent 12 }}
+            {{- with .Values.podLabels }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.podAnnotations }}
+          annotations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
         spec:
           serviceAccountName: {{ include "copa-harbor.serviceAccountName" . }}
           automountServiceAccountToken: false
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           restartPolicy: OnFailure
           securityContext:
             {{- include "copa-harbor.podSecurityContext" . | nindent 12 }}

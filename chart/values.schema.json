@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
-  "required": ["mode", "image", "harbor"],
+  "required": ["mode", "image", "harborserver"],
   "properties": {
     "mode": {
       "type": "string",
@@ -14,7 +14,7 @@
         "repository": { "type": "string", "minLength": 1 }
       }
     },
-    "harbor": {
+    "harborserver": {
       "type": "object",
       "required": ["registry"],
       "properties": {
