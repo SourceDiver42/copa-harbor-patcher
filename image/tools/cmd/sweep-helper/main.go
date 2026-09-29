@@ -28,6 +28,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/project-copacetic/copacetic/pkg/bulk"
+	"github.com/project-copacetic/copacetic/pkg/patch"
 	"gopkg.in/yaml.v3"
 )
 
@@ -119,6 +120,16 @@ func renderTagTemplate(tmplStr, sourceTag string) (string, error) {
 // latestPatchedTag lists tags in repoName and returns the highest of
 // baseTag / baseTag-N (matching copa's own re-patch versioning scheme), or
 // "" if none exist yet.
+//
+// This MUST resolve to the exact same tag copa's skip-detection looks the
+// report up under (its latestPatchTag over discoverExistingPatchTags) — copa
+// keys reports by "<repo>:<latestTag>" and fail-opens (re-patches with an
+// incremented -N tag) on a lookup miss. In particular copa *excludes*
+// architecture-specific tags like "<baseTag>-386"/"<baseTag>-arm-v7"; the
+// numeric ones (e.g. "-386") would otherwise be mistaken for a "-N" re-patch
+// version here, causing us to key the report under the wrong tag and copa to
+// increment forever. We reuse copa's own ArchTagSuffixes() so the exclusion
+// list stays in sync with copa automatically.
 func latestPatchedTag(ctx context.Context, repoName, baseTag string) (string, error) {
 	repo, err := name.NewRepository(repoName)
 	if err != nil {
@@ -130,16 +141,35 @@ func latestPatchedTag(ctx context.Context, repoName, baseTag string) (string, er
 		return "", fmt.Errorf("listing tags: %w", err)
 	}
 
+	return pickLatestPatchedTag(baseTag, tags), nil
+}
+
+// pickLatestPatchedTag is the pure tag-selection logic, split out for testing.
+func pickLatestPatchedTag(baseTag string, tags []string) string {
+	archSuffixes := patch.ArchTagSuffixes()
+	isArchSpecific := func(t string) bool {
+		for _, suffix := range archSuffixes {
+			if t == baseTag+"-"+suffix {
+				return true
+			}
+		}
+		return false
+	}
+
 	suffixPattern := regexp.MustCompile("^" + regexp.QuoteMeta(baseTag) + `(-([0-9]+))?$`)
 	best := -1
 	bestTag := ""
 	for _, t := range tags {
+		if isArchSpecific(t) {
+			continue // copa excludes these from its patched-tag versioning
+		}
 		m := suffixPattern.FindStringSubmatch(t)
 		if m == nil {
 			continue
 		}
 		n := 0
 		if m[2] != "" {
+			var err error
 			n, err = strconv.Atoi(m[2])
 			if err != nil {
 				continue
@@ -150,5 +180,5 @@ func latestPatchedTag(ctx context.Context, repoName, baseTag string) (string, er
 			bestTag = t
 		}
 	}
-	return bestTag, nil
+	return bestTag
 }

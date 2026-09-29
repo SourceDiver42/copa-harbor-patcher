@@ -299,11 +299,51 @@ func fetchHarborReport(client *http.Client, apiBase, username, password string, 
 		return nil, fmt.Errorf("Harbor API returned %s: %s", resp.Status, string(body))
 	}
 
-	var report harborVulnerabilityReport
-	if err := json.Unmarshal(body, &report); err != nil {
+	report, err := parseHarborReport(body)
+	if err != nil {
 		return nil, fmt.Errorf("parsing Harbor report (Content-Type %q): %w", resp.Header.Get("Content-Type"), err)
 	}
-	return &report, nil
+	return report, nil
+}
+
+// parseHarborReport decodes the body of Harbor's additions/vulnerabilities
+// endpoint. Harbor returns the report(s) as a JSON object *keyed by MIME
+// type* — e.g. {"application/vnd.security.vulnerability.report; version=1.1":
+// {"vulnerabilities": [...]}} — NOT as a flat {"vulnerabilities": [...]}.
+// Decoding the outer object straight into harborVulnerabilityReport therefore
+// silently yields zero vulnerabilities (the previous behaviour, which made
+// copa believe every image was already clean). We handle both shapes: try the
+// MIME-keyed map first, then fall back to a flat object, so the tool is robust
+// across Harbor versions and to the raw scanner-adapter format.
+func parseHarborReport(body []byte) (*harborVulnerabilityReport, error) {
+	// Preferred shape: object keyed by MIME type. Each value is a report; we
+	// merge the vulnerabilities across all reports present (there is normally
+	// exactly one, matching the X-Accept-Vulnerabilities we requested).
+	var byMIME map[string]json.RawMessage
+	if err := json.Unmarshal(body, &byMIME); err == nil {
+		if _, isFlat := byMIME["vulnerabilities"]; !isFlat && len(byMIME) > 0 {
+			merged := &harborVulnerabilityReport{}
+			decoded := false
+			for _, raw := range byMIME {
+				var r harborVulnerabilityReport
+				if err := json.Unmarshal(raw, &r); err != nil {
+					continue // a value that isn't a report object; skip it
+				}
+				merged.Vulnerabilities = append(merged.Vulnerabilities, r.Vulnerabilities...)
+				decoded = true
+			}
+			if decoded {
+				return merged, nil
+			}
+		}
+	}
+
+	// Fallback: a flat report object, i.e. {"vulnerabilities": [...]}.
+	var flat harborVulnerabilityReport
+	if err := json.Unmarshal(body, &flat); err != nil {
+		return nil, err
+	}
+	return &flat, nil
 }
 
 // detectOS reads /etc/os-release out of the image's layers, most-recent
@@ -350,12 +390,25 @@ func findOSRelease(r io.Reader) (osType, osVersion string, found bool, err error
 		if name != "etc/os-release" && name != "usr/lib/os-release" {
 			continue
 		}
+		// On Alpine (and others) /etc/os-release is a symlink to
+		// /usr/lib/os-release. A symlink tar entry carries no content, so
+		// reading it yields an empty os-release — and thus an empty OS type,
+		// which silently breaks copa's report-driven patching (it can't pick
+		// the package manager). Only regular files hold the actual key=value
+		// data: skip non-regular entries and keep scanning for the real file
+		// (e.g. the usr/lib/os-release the symlink points at).
+		if hdr.Typeflag != tar.TypeReg {
+			continue
+		}
 		var buf bytes.Buffer
-		if _, err := io.Copy(&buf, tr); err != nil {
+		if _, err := io.Copy(&buf, tr); err != nil { //nolint:gosec // os-release is tiny; bounded by layer size
 			return "", "", false, err
 		}
-		osType, osVersion = parseOSRelease(buf.Bytes())
-		return osType, osVersion, true, nil
+		t, v := parseOSRelease(buf.Bytes())
+		if t == "" {
+			continue // not a usable os-release; keep looking
+		}
+		return t, v, true, nil
 	}
 }
 
