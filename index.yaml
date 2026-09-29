@@ -2,6 +2,17 @@ apiVersion: v1
 entries:
   copa-harbor-patcher:
   - apiVersion: v2
+    appVersion: 0.3.0
+    created: "2026-09-29T17:57:09.319974013Z"
+    description: Automated copa vulnerability patching for images in a Harbor registry
+      (CronJob sweep and/or Harbor-webhook-triggered patching)
+    digest: 6a2b97820d1afc94c0ba243230e32f97dd50d0fb2f22f5c82aa031a48384ae5f
+    name: copa-harbor-patcher
+    type: application
+    urls:
+    - https://sourcediver42.github.io/copa-harbor-patcher/copa-harbor-patcher-0.3.0.tgz
+    version: 0.3.0
+  - apiVersion: v2
     appVersion: 0.2.0
     created: "2026-09-28T17:48:48.554866347Z"
     description: Automated copa vulnerability patching for images in a Harbor registry
@@ -12,4 +23,4 @@ entries:
     urls:
     - https://sourcediver42.github.io/copa-harbor-patcher/copa-harbor-patcher-0.2.0.tgz
     version: 0.2.0
-generated: "2026-09-28T17:48:48.554131396Z"
+generated: "2026-09-29T17:57:09.319173833Z"
