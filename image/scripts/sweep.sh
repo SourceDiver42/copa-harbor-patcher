@@ -1,16 +1,24 @@
 #!/bin/bash
-# CronJob entrypoint: patch the whole fleet declared in bulk.yaml, then fetch
-# Harbor's own (already-computed) vulnerability report for whatever got
-# pushed, so the next scheduled run's skip-detection has fresh reports to
-# check against. This does NOT run a separate scanner — it reuses Harbor's
-# built-in Trivy scan results via harbor-report.
+# CronJob entrypoint: comprehensively patch every image declared in bulk.yaml
+# (updating all OS packages across all platforms), skipping images whose
+# already-patched target has no fixable OS-package CVEs left.
 #
-# Known limitation: skip-detection (and this script's auto-rescan) only
-# covers images using `tags.strategy: list` in bulk.yaml. Images discovered
-# via `pattern`/`latest` strategies are patched every run (sweep-helper logs
-# a warning per such image to stderr) since resolving their live source tags
-# ahead of time would require duplicating copa's own registry-discovery
-# logic rather than just its target-naming rules.
+# Why not copa's own bulk/report-driven mode: passing `-r <dir>` to `copa
+# patch --config` makes copa match reports to platforms by the report's
+# Metadata.Config.Arch — which Harbor's report (and thus harbor-report) has no
+# per-platform notion of — so for a multi-arch image copa finds "No scan
+# report for platform" for every platform and patches nothing. Instead we do
+# our own skip-detection here and run a comprehensive per-image `copa patch`
+# (no `-r`), which updates all OS packages on every platform and doesn't need a
+# report at all. Harbor's scan (via harbor-report) is used only to decide
+# whether patching is still needed.
+#
+# Known limitation: only OS-package CVEs are considered/fixable (see
+# harbor-report) — language/app-package CVEs are reported by Harbor but can't
+# be fixed by the OS package manager and are ignored here. An image whose
+# remaining OS CVEs have no fix available in its distro release will be
+# re-patched every run (same tag overwritten, no accumulation); fix that by
+# rebuilding from an updated base image.
 set -euo pipefail
 
 BULK_CONFIG="${BULK_CONFIG:-/etc/copa/bulk.yaml}"
@@ -19,42 +27,47 @@ TIMEOUT="${PATCH_TIMEOUT:-20m}"
 
 mkdir -p "$REPORTS_DIR"
 
-# Prune reports written by an older, buggier version of harbor-report before
-# copa reads the directory. copa's skip-detection trusts every *.json in here
-# by ArtifactName, so a stale report (e.g. the pre-fix ones that always
-# recorded zero vulnerabilities) would silently make copa skip a
-# still-vulnerable image. Keep "copaHarborReportVersion":"2" in sync with
-# reportSchemaVersion in cmd/harbor-report/main.go.
-REPORT_SCHEMA_VERSION="2"
-for f in "$REPORTS_DIR"/*.json; do
-  [ -e "$f" ] || continue
-  if ! grep -q "\"copaHarborReportVersion\": *\"${REPORT_SCHEMA_VERSION}\"" "$f"; then
-    echo "sweep: pruning stale report ${f} (missing schema version ${REPORT_SCHEMA_VERSION})"
-    rm -f "$f"
-  fi
-done
+echo "sweep: planning from ${BULK_CONFIG}"
+# sweep-helper emits one tab-separated "<source-ref>\t<target-ref>" line per
+# image:tag. Read the whole plan first so the patch loop isn't tied to the
+# helper's pipe lifetime.
+PLAN="$(sweep-helper -config "$BULK_CONFIG")"
 
-echo "sweep: patching fleet from ${BULK_CONFIG}"
-# Only pass -r once the reports directory actually has something in it.
-# Passing -r to bulk mode switches every non-skipped job from a
-# comprehensive update to report-driven patching (confirmed live: with an
-# empty reports dir, copa "preserved" every platform as having "no scan
-# report" instead of doing a comprehensive update) — so on a genuinely
-# first run (nothing to skip-detect against yet), we want -r omitted
-# entirely to get copa's real first-time comprehensive-update behavior.
-REPORT_ARGS=()
-if [ -n "$(find "$REPORTS_DIR" -maxdepth 1 -name '*.json' -print -quit 2>/dev/null)" ]; then
-  REPORT_ARGS=(-r "$REPORTS_DIR")
+if [ -z "$PLAN" ]; then
+  echo "sweep: nothing to do (no list-strategy images with a target registry)"
+  exit 0
 fi
-copa patch --config "$BULK_CONFIG" --push "${REPORT_ARGS[@]}" --scanner native --timeout "$TIMEOUT"
 
-echo "sweep: resolving patched targets to fetch fresh Harbor reports for"
-sweep-helper -config "$BULK_CONFIG" | while IFS= read -r ref; do
-  out_name="$(echo "$ref" | tr -c 'A-Za-z0-9' '_')"
-  echo "sweep: fetching Harbor report for ${ref}"
-  if ! harbor-report -ref "$ref" -out "${REPORTS_DIR}/${out_name}.json"; then
-    echo "sweep: WARNING: fetching Harbor report for ${ref} failed; next run will fail-open and re-patch it" >&2
+while IFS=$'\t' read -r SOURCE TARGET; do
+  [ -n "${SOURCE:-}" ] && [ -n "${TARGET:-}" ] || continue
+
+  report="${REPORTS_DIR}/$(echo "$TARGET" | tr -c 'A-Za-z0-9' '_').json"
+
+  # Skip-detection: if the already-patched target exists and Harbor reports it
+  # has no fixable OS-package CVEs left, there's nothing to do. harbor-report
+  # exits non-zero when the target doesn't exist yet (first run) or its scan
+  # can't be obtained — in which case we fall through and patch.
+  if harbor-report -ref "$TARGET" -out "$report"; then
+    fixable="$(grep -c '"vulnerabilityID"' "$report" 2>/dev/null || true)"
+    fixable="${fixable:-0}"
+    if [ "$fixable" -eq 0 ]; then
+      echo "sweep: skip ${SOURCE} — patched target ${TARGET} has 0 fixable OS CVEs"
+      continue
+    fi
+    echo "sweep: ${TARGET} still has ${fixable} fixable OS CVE(s); (re-)patching ${SOURCE}"
+  else
+    echo "sweep: no usable report for ${TARGET} (likely not patched yet); patching ${SOURCE}"
   fi
-done
+
+  # Comprehensive patch: updates every OS package on every platform and pushes
+  # to TARGET (a full reference, so it may be a different repo), overwriting
+  # the tag. No `-r` — so no report-driven per-platform matching and no
+  # "-patched-N" version churn.
+  echo "sweep: patching ${SOURCE} -> ${TARGET}"
+  if ! copa patch -i "$SOURCE" -t "$TARGET" --push --scanner native --timeout "$TIMEOUT"; then
+    echo "sweep: WARNING: patch failed for ${SOURCE}; continuing with the rest of the fleet" >&2
+    continue
+  fi
+done <<< "$PLAN"
 
 echo "sweep: done"
