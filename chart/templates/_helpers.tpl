@@ -231,6 +231,13 @@ as usual with `nativeSidecar` unset.
   {{- end }}
   securityContext:
     {{- include "copa-harbor.buildkitSecurityContext" . | nindent 4 }}
+  {{- with .Values.extraEnv }}
+  # Applied here too (not just the main container) because buildkitd resolves
+  # and pulls copa's tooling/base images from its own process environment — an
+  # egress HTTP proxy set only on the copa container won't cover those pulls.
+  env:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   resources:
     {{- toYaml .Values.buildkit.resources | nindent 4 }}
   volumeMounts:

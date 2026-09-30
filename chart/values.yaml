@@ -118,3 +118,21 @@ affinity: {}
 # sidecar — e.g. for a trust-manager-managed CA bundle ConfigMap.
 extraVolumes: []
 extraVolumeMounts: []
+
+# Extra environment variables, applied to BOTH the main (copa/webhook)
+# container and the buildkitd sidecar. This is the integration point for an
+# egress HTTP proxy: BuildKit resolves/pulls copa's tooling images (e.g.
+# ghcr.io/project-copacetic/copacetic/debian:stable-slim) using the sidecar's
+# own environment, so the proxy vars must be set there too, not just on the
+# main container. Put your Harbor host (and cluster-internal ranges) in
+# NO_PROXY so target-image pulls/pushes stay direct. Set both upper- and
+# lower-case forms — different tools read different ones.
+# Example:
+#   extraEnv:
+#     - {name: HTTPS_PROXY, value: "http://proxy.internal:3128"}
+#     - {name: HTTP_PROXY,  value: "http://proxy.internal:3128"}
+#     - {name: NO_PROXY,    value: "harbor.example.com,.svc,.cluster.local,10.0.0.0/8"}
+#     - {name: https_proxy, value: "http://proxy.internal:3128"}
+#     - {name: http_proxy,  value: "http://proxy.internal:3128"}
+#     - {name: no_proxy,    value: "harbor.example.com,.svc,.cluster.local,10.0.0.0/8"}
+extraEnv: []

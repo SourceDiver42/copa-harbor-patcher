@@ -62,6 +62,9 @@ spec:
                 {{- include "copa-harbor.mainSecurityContext" . | nindent 16 }}
               env:
                 {{- include "copa-harbor.commonEnv" . | nindent 16 }}
+                {{- with .Values.extraEnv }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
               resources:
                 {{- toYaml .Values.resources | nindent 16 }}
               volumeMounts:
