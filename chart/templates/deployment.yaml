@@ -63,6 +63,9 @@ spec:
                 secretKeyRef:
                   name: {{ include "copa-harbor.webhookSecretName" . }}
                   key: token
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:

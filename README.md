@@ -133,6 +133,7 @@ See `chart/values.yaml` for the full set with comments. Key ones:
 | `cronjob.bulkConfig` | The `PatchConfig` YAML, embedded directly (not sensitive) |
 | `webhook.sharedSecret` / `webhook.existingSecret` | Bearer token Harbor's webhook policy must send as its "Auth Header"; auto-generated on install if left unset |
 | `extraVolumes` / `extraVolumeMounts` | Mounted on both the main container and the buildkitd sidecar — this is the integration point for CA trust (see below) and anything else your cluster needs injected |
+| `extraEnv` | Extra env vars applied to **both** the main container and the buildkitd sidecar — the integration point for an egress HTTP proxy (see [Egress HTTP proxy](#egress-http-proxy)) |
 
 # Buildkit rootful vs rootless
 Rootful (`buildkit.rootless: false`, the default) is the simplest, most
@@ -177,6 +178,32 @@ footprint than full `privileged: true`.
    an open, unresolved issue for this exact workload. Fixable via
    `machine.sysctls`, but not reliably even then per that issue's reports.
    Use rootful on Talos.
+
+## Egress HTTP proxy
+
+In a proxy-only egress network, copa's patch build fails at image resolution
+(`dial tcp …:443: i/o timeout` on e.g.
+`ghcr.io/project-copacetic/copacetic/debian:stable-slim`). That pull is done by
+**BuildKit**, which reads proxy settings from the **buildkitd sidecar's own
+environment** — so the proxy must be set there, not only on the main container.
+`extraEnv` applies to both. Put your Harbor host (and cluster-internal ranges)
+in `NO_PROXY` so target-image pulls/pushes stay direct, and set both upper- and
+lower-case forms:
+
+```yaml
+extraEnv:
+  - {name: HTTPS_PROXY, value: "http://proxy.internal:3128"}
+  - {name: HTTP_PROXY,  value: "http://proxy.internal:3128"}
+  - {name: NO_PROXY,    value: "harbor.example.com,.svc,.cluster.local,10.0.0.0/8"}
+  - {name: https_proxy, value: "http://proxy.internal:3128"}
+  - {name: http_proxy,  value: "http://proxy.internal:3128"}
+  - {name: no_proxy,    value: "harbor.example.com,.svc,.cluster.local,10.0.0.0/8"}
+```
+
+This covers image resolve/pull/push (BuildKit) and `harbor-report`/copa's own
+registry + Harbor-API calls. The package-download RUN steps inside the patch
+build (apt/apk reaching distro mirrors) are a separate concern not addressed by
+this — if your mirrors are only reachable via the proxy, raise an issue.
 
 ## Pod Security Admission
 

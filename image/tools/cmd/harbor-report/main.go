@@ -115,7 +115,13 @@ func main() {
 
 	client := &http.Client{Timeout: 60 * time.Second}
 	if os.Getenv("HARBOR_INSECURE_SKIP_VERIFY") == "1" {
-		client.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}} //nolint:gosec // explicit opt-in for test clusters only
+		// Keep ProxyFromEnvironment: a bare &http.Transport{} has a nil Proxy,
+		// which would bypass HTTP(S)_PROXY entirely — unlike the default
+		// client used on the verify path, which honors it.
+		client.Transport = &http.Transport{
+			Proxy:           http.ProxyFromEnvironment,
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // explicit opt-in for test clusters only
+		}
 	}
 
 	waitTimeout := 5 * time.Minute
