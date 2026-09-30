@@ -10,19 +10,25 @@
 // X-Accept-Vulnerabilities header). That schema is confirmed against
 // goharbor/pluggable-scanner-spec's VulnerabilityItem definition: each
 // vulnerability has `id`, `package`, `version`, `fix_version`, `severity` —
-// notably no field distinguishing OS vs. language packages, so this tool
-// treats every reported vulnerability as an OS-package update (Class
-// "os-pkgs"), matching copa's own default `--pkg-types os` behavior. If you
-// need language-package patching from Harbor-sourced reports, you'll need
-// to extend this once you've confirmed whether your Harbor/scanner version
-// exposes an ecosystem field beyond this spec's baseline.
+// notably no field distinguishing OS vs. language packages.
+//
+// That distinction matters: Harbor's report mixes OS-package CVEs (apk/apt)
+// with language/application ones (npm, pip, composer, ...), and copa driven
+// by this report with the OS package manager can only fix the OS ones.
+// Emitting a language package copa can't touch makes the "patched" image keep
+// reporting that CVE forever (copa re-patches endlessly and never converges).
+// Since the API exposes no type field, this tool determines which packages
+// are OS-managed by reading the image's own OS package database out of its
+// layers — /lib/apk/db/installed (Alpine) or /var/lib/dpkg/status
+// (Debian/Ubuntu) — and drops any reported vuln whose package isn't in it. If
+// no recognized DB is found (rpm, distroless, unknown), it falls back to
+// emitting everything rather than dropping legitimate OS updates.
 //
 // OS type/version (needed to pick copa's package manager) isn't part of
-// Harbor's vulnerability report schema either, so this tool determines it
-// independently and reliably by reading /etc/os-release directly out of the
-// image's layers (same primitive Trivy itself uses) via go-containerregistry,
-// using the same registry credentials/keychain as everything else in this
-// project.
+// Harbor's vulnerability report schema either, so it too is read directly out
+// of the image's layers (/etc/os-release, the same primitive Trivy uses) via
+// go-containerregistry, in the same single layer pass, using the same
+// registry credentials/keychain as everything else in this project.
 package main
 
 import (
@@ -59,13 +65,25 @@ type harborVulnerabilityReport struct {
 	} `json:"vulnerabilities"`
 }
 
+// reportSchemaVersion stamps every report this tool writes. sweep.sh prunes
+// any report in the reports dir that lacks the current value before handing
+// the dir to copa, so reports written by an older, buggier version of this
+// tool (e.g. the pre-fix ones that always recorded zero vulnerabilities)
+// can't silently cause copa's skip-detection to skip a still-vulnerable
+// image. Bump this whenever a change makes previously-written reports
+// untrustworthy. Keep it in sync with the grep in scripts/sweep.sh.
+const reportSchemaVersion = "2"
+
 // reportEnvelope is v1alpha2.UpdateManifest plus an extra top-level
 // ArtifactName field. pkg/bulk's skip-detection (buildReportIndex) reads
 // that literal field directly off the file regardless of --scanner, so it
 // must be present even though it's not part of the v1alpha2 schema itself.
+// SchemaVersion is our own marker (see reportSchemaVersion); copa ignores
+// unknown fields, so it's harmless to the parser.
 type reportEnvelope struct {
 	v1alpha2.UpdateManifest
-	ArtifactName string `json:"ArtifactName"`
+	ArtifactName  string `json:"ArtifactName"`
+	SchemaVersion string `json:"copaHarborReportVersion"`
 }
 
 func main() {
@@ -85,11 +103,15 @@ func main() {
 		log.Fatalf("parsing ref %q: %v", *ref, err)
 	}
 
-	osType, osVersion, err := detectOS(tag)
+	osType, osVersion, osPkgs, err := detectImageFacts(tag)
 	if err != nil {
 		log.Fatalf("detecting OS for %q: %v", *ref, err)
 	}
-	log.Printf("detected OS %s %s for %s", osType, osVersion, *ref)
+	if osPkgs == nil {
+		log.Printf("detected OS %s %s for %s (no readable OS package DB; emitting all fixable vulns unfiltered)", osType, osVersion, *ref)
+	} else {
+		log.Printf("detected OS %s %s for %s (%d OS-managed packages)", osType, osVersion, *ref, len(osPkgs))
+	}
 
 	client := &http.Client{Timeout: 60 * time.Second}
 	if os.Getenv("HARBOR_INSECURE_SKIP_VERIFY") == "1" {
@@ -112,10 +134,25 @@ func main() {
 	}
 	log.Printf("Harbor reported %d vulnerabilities for %s", len(report.Vulnerabilities), *ref)
 
+	// Harbor's report mixes OS-package vulnerabilities with language/app
+	// package ones (npm, pip, composer, ...) and — in the schema we can get
+	// from its API — exposes no field to tell them apart. copa, driven by
+	// this report with the OS package manager (apk/apt), can only ever fix
+	// the OS ones; feeding it a language package it can't touch makes the
+	// "patched" image keep reporting that vuln forever (endless re-patch /
+	// never converges). So drop any vuln whose package isn't in the image's
+	// OS package DB. If we couldn't read that DB (osPkgs == nil: unknown
+	// distro, distroless, rpm, ...), fall back to emitting everything rather
+	// than dropping legitimate OS updates.
 	var osUpdates v1alpha2.UpdatePackages
+	var droppedNonOS int
 	for _, v := range report.Vulnerabilities {
 		if v.FixVersion == "" {
 			continue // not fixable, nothing for copa to do
+		}
+		if osPkgs != nil && !osPkgs[v.Package] {
+			droppedNonOS++
+			continue // language/app package: copa can't fix it from a Harbor report
 		}
 		osUpdates = append(osUpdates, v1alpha2.UpdatePackage{
 			Name:             v.Package,
@@ -126,6 +163,9 @@ func main() {
 			Class:            "os-pkgs",
 		})
 	}
+	if droppedNonOS > 0 {
+		log.Printf("dropped %d fixable vuln(s) in non-OS packages (copa patches OS packages only from Harbor reports)", droppedNonOS)
+	}
 
 	envelope := reportEnvelope{
 		UpdateManifest: v1alpha2.UpdateManifest{
@@ -135,7 +175,8 @@ func main() {
 			},
 			OSUpdates: osUpdates,
 		},
-		ArtifactName: *ref,
+		ArtifactName:  *ref,
+		SchemaVersion: reportSchemaVersion,
 	}
 
 	data, err := json.MarshalIndent(envelope, "", "  ")
@@ -346,70 +387,133 @@ func parseHarborReport(body []byte) (*harborVulnerabilityReport, error) {
 	return &flat, nil
 }
 
-// detectOS reads /etc/os-release out of the image's layers, most-recent
-// layer first (so an overriding file in a later layer wins), and returns
-// the os-release ID and VERSION_ID fields.
-func detectOS(ref name.Reference) (osType, osVersion string, err error) {
+// detectImageFacts reads, from the image's layers (most-recent first, so a
+// later layer's copy of a file wins), both the os-release fields and the set
+// of package names the OS package manager tracks. osPkgs is nil — not an
+// empty map — when no recognized package DB (apk/dpkg) was found, so callers
+// can tell "distro with no OS packages" (impossible) apart from "couldn't
+// read the DB, don't filter" (rpm, distroless, unknown).
+func detectImageFacts(ref name.Reference) (osType, osVersion string, osPkgs map[string]bool, err error) {
 	img, err := remote.Image(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
 	if err != nil {
-		return "", "", fmt.Errorf("fetching image: %w", err)
+		return "", "", nil, fmt.Errorf("fetching image: %w", err)
 	}
 	layers, err := img.Layers()
 	if err != nil {
-		return "", "", fmt.Errorf("reading layers: %w", err)
+		return "", "", nil, fmt.Errorf("reading layers: %w", err)
 	}
 
 	for i := len(layers) - 1; i >= 0; i-- {
 		rc, err := layers[i].Uncompressed()
 		if err != nil {
-			return "", "", fmt.Errorf("reading layer %d: %w", i, err)
+			return "", "", nil, fmt.Errorf("reading layer %d: %w", i, err)
 		}
-		osType, osVersion, found, err := findOSRelease(rc)
+		lt, lv, pkgs, err := scanLayer(rc)
 		rc.Close()
 		if err != nil {
-			return "", "", err
+			return "", "", nil, err
 		}
-		if found {
-			return osType, osVersion, nil
+		if osType == "" && lt != "" {
+			osType, osVersion = lt, lv
+		}
+		if osPkgs == nil && len(pkgs) > 0 {
+			osPkgs = pkgs
+		}
+		if osType != "" && osPkgs != nil {
+			break // found both; older layers can't override
 		}
 	}
-	return "", "", fmt.Errorf("no /etc/os-release found in any layer")
+	if osType == "" {
+		return "", "", nil, fmt.Errorf("no /etc/os-release found in any layer")
+	}
+	return osType, osVersion, osPkgs, nil
 }
 
-func findOSRelease(r io.Reader) (osType, osVersion string, found bool, err error) {
+// scanLayer reads one uncompressed layer tarball, extracting the os-release
+// fields and/or the OS package set if either appears in it. Non-regular
+// entries are skipped: on Alpine /etc/os-release is a symlink to
+// /usr/lib/os-release, and a symlink tar entry carries no content — reading
+// it would yield an empty OS type and silently break copa's report-driven
+// patching (it couldn't pick the package manager).
+func scanLayer(r io.Reader) (osType, osVersion string, osPkgs map[string]bool, err error) {
 	tr := tar.NewReader(r)
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
-			return "", "", false, nil
+			return osType, osVersion, osPkgs, nil
 		}
 		if err != nil {
-			return "", "", false, err
+			return "", "", nil, err
 		}
-		name := strings.TrimPrefix(hdr.Name, "./")
-		if name != "etc/os-release" && name != "usr/lib/os-release" {
-			continue
-		}
-		// On Alpine (and others) /etc/os-release is a symlink to
-		// /usr/lib/os-release. A symlink tar entry carries no content, so
-		// reading it yields an empty os-release — and thus an empty OS type,
-		// which silently breaks copa's report-driven patching (it can't pick
-		// the package manager). Only regular files hold the actual key=value
-		// data: skip non-regular entries and keep scanning for the real file
-		// (e.g. the usr/lib/os-release the symlink points at).
 		if hdr.Typeflag != tar.TypeReg {
 			continue
 		}
-		var buf bytes.Buffer
-		if _, err := io.Copy(&buf, tr); err != nil { //nolint:gosec // os-release is tiny; bounded by layer size
-			return "", "", false, err
+		switch strings.TrimPrefix(hdr.Name, "./") {
+		case "etc/os-release", "usr/lib/os-release":
+			buf, err := io.ReadAll(tr) //nolint:gosec // bounded by layer size; os-release is tiny
+			if err != nil {
+				return "", "", nil, err
+			}
+			if t, v := parseOSRelease(buf); t != "" && osType == "" {
+				osType, osVersion = t, v
+			}
+		case "lib/apk/db/installed":
+			buf, err := io.ReadAll(tr) //nolint:gosec // bounded by layer size
+			if err != nil {
+				return "", "", nil, err
+			}
+			if p := parseAPKInstalled(buf); len(p) > 0 {
+				osPkgs = p
+			}
+		case "var/lib/dpkg/status":
+			buf, err := io.ReadAll(tr) //nolint:gosec // bounded by layer size
+			if err != nil {
+				return "", "", nil, err
+			}
+			if p := parseDpkgStatus(buf); len(p) > 0 {
+				osPkgs = p
+			}
 		}
-		t, v := parseOSRelease(buf.Bytes())
-		if t == "" {
-			continue // not a usable os-release; keep looking
-		}
-		return t, v, true, nil
 	}
+}
+
+// parseAPKInstalled extracts package (P:) and origin (o:) names from Alpine's
+// /lib/apk/db/installed. Origin names are included too so a vuln Trivy
+// attributes to a subpackage's origin still counts as OS-managed.
+func parseAPKInstalled(data []byte) map[string]bool {
+	pkgs := map[string]bool{}
+	sc := bufio.NewScanner(bytes.NewReader(data))
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for sc.Scan() {
+		line := sc.Text()
+		if len(line) > 2 && (line[0] == 'P' || line[0] == 'o') && line[1] == ':' {
+			pkgs[line[2:]] = true
+		}
+	}
+	return pkgs
+}
+
+// parseDpkgStatus extracts binary (Package:) and source (Source:) package
+// names from Debian/Ubuntu's /var/lib/dpkg/status. Source names are included
+// because Trivy sometimes reports a vuln against the source package name.
+func parseDpkgStatus(data []byte) map[string]bool {
+	pkgs := map[string]bool{}
+	sc := bufio.NewScanner(bytes.NewReader(data))
+	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for sc.Scan() {
+		line := sc.Text()
+		switch {
+		case strings.HasPrefix(line, "Package: "):
+			pkgs[strings.TrimSpace(line[len("Package:"):])] = true
+		case strings.HasPrefix(line, "Source: "):
+			s := strings.TrimSpace(line[len("Source:"):])
+			if i := strings.IndexByte(s, ' '); i >= 0 {
+				s = s[:i] // drop trailing "(version)"
+			}
+			pkgs[s] = true
+		}
+	}
+	return pkgs
 }
 
 func parseOSRelease(data []byte) (osType, osVersion string) {

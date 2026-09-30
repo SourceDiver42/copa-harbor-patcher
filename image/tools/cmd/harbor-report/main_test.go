@@ -6,43 +6,81 @@ import (
 	"testing"
 )
 
-// TestFindOSReleaseSkipsSymlink reproduces the Alpine layout where
-// /etc/os-release is a symlink to /usr/lib/os-release: the symlink entry has
-// no content, so the scanner must skip it and read the real file instead of
-// returning an empty OS type.
-func TestFindOSReleaseSkipsSymlink(t *testing.T) {
+// writeTar builds a layer tarball from a list of entries. A nil body with a
+// non-empty linkname makes a symlink; otherwise a regular file.
+type tarEntry struct {
+	name    string
+	body    string
+	symlink string
+}
+
+func writeTar(t *testing.T, entries []tarEntry) []byte {
+	t.Helper()
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
-	// Symlink first (as it typically appears in the tar), with no body.
-	if err := tw.WriteHeader(&tar.Header{
-		Name:     "etc/os-release",
-		Typeflag: tar.TypeSymlink,
-		Linkname: "../usr/lib/os-release",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	// The real file, which carries the actual data.
-	body := []byte("NAME=\"Alpine Linux\"\nID=alpine\nVERSION_ID=3.24.1\n")
-	if err := tw.WriteHeader(&tar.Header{
-		Name:     "usr/lib/os-release",
-		Typeflag: tar.TypeReg,
-		Size:     int64(len(body)),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tw.Write(body); err != nil {
-		t.Fatal(err)
+	for _, e := range entries {
+		if e.symlink != "" {
+			if err := tw.WriteHeader(&tar.Header{Name: e.name, Typeflag: tar.TypeSymlink, Linkname: e.symlink}); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		if err := tw.WriteHeader(&tar.Header{Name: e.name, Typeflag: tar.TypeReg, Size: int64(len(e.body))}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(e.body)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := tw.Close(); err != nil {
 		t.Fatal(err)
 	}
+	return buf.Bytes()
+}
 
-	osType, osVersion, found, err := findOSRelease(bytes.NewReader(buf.Bytes()))
+// TestScanLayerSkipsSymlink reproduces the Alpine layout where /etc/os-release
+// is a symlink to /usr/lib/os-release: the symlink entry has no content, so
+// the scanner must skip it and read the real file, and must also pick up the
+// apk package DB in the same layer.
+func TestScanLayerSkipsSymlink(t *testing.T) {
+	layer := writeTar(t, []tarEntry{
+		{name: "etc/os-release", symlink: "../usr/lib/os-release"},
+		{name: "usr/lib/os-release", body: "NAME=\"Alpine Linux\"\nID=alpine\nVERSION_ID=3.24.1\n"},
+		{name: "lib/apk/db/installed", body: "P:musl\nV:1.2.5-r0\n\nP:busybox\nV:1.36.1-r0\no:busybox\n"},
+	})
+	osType, osVersion, osPkgs, err := scanLayer(bytes.NewReader(layer))
 	if err != nil {
-		t.Fatalf("findOSRelease error: %v", err)
+		t.Fatalf("scanLayer error: %v", err)
 	}
-	if !found || osType != "alpine" || osVersion != "3.24.1" {
-		t.Fatalf("findOSRelease = (%q, %q, found=%v), want (\"alpine\", \"3.24.1\", true)", osType, osVersion, found)
+	if osType != "alpine" || osVersion != "3.24.1" {
+		t.Fatalf("scanLayer OS = (%q, %q), want (alpine, 3.24.1)", osType, osVersion)
+	}
+	if !osPkgs["musl"] || !osPkgs["busybox"] {
+		t.Fatalf("scanLayer osPkgs = %v, want musl+busybox present", osPkgs)
+	}
+}
+
+func TestParseAPKInstalled(t *testing.T) {
+	pkgs := parseAPKInstalled([]byte("P:musl\nV:1.2.5-r0\nA:x86_64\n\nP:libssl3\no:openssl\nV:3.3.0-r0\n"))
+	for _, want := range []string{"musl", "libssl3", "openssl"} {
+		if !pkgs[want] {
+			t.Errorf("parseAPKInstalled missing %q; got %v", want, pkgs)
+		}
+	}
+	if pkgs["x86_64"] {
+		t.Errorf("parseAPKInstalled should not treat arch (A:) as a package")
+	}
+}
+
+func TestParseDpkgStatus(t *testing.T) {
+	status := "Package: libc6\nStatus: install ok installed\nVersion: 2.36-9\n\n" +
+		"Package: libssl3\nSource: openssl\nStatus: install ok installed\n\n" +
+		"Package: perl-base\nSource: perl (5.36.0-7)\n"
+	pkgs := parseDpkgStatus([]byte(status))
+	for _, want := range []string{"libc6", "libssl3", "openssl", "perl-base", "perl"} {
+		if !pkgs[want] {
+			t.Errorf("parseDpkgStatus missing %q; got %v", want, pkgs)
+		}
 	}
 }
 
