@@ -208,6 +208,19 @@ kubectl label ns <namespace> pod-security.kubernetes.io/enforce=privileged
   `harbor-report` logs a warning and the next sweep fails open (re-patches
   rather than silently skipping), so this degrades gracefully but does mean
   skip-detection won't kick in for that image until Harbor's scan succeeds.
+- **Only OS-package CVEs are patched.** copa driven by a Harbor report patches
+  with the image's OS package manager (`apk`/`apt`), so it can only fix
+  OS-package vulnerabilities — not language/application ones (npm, pip,
+  composer, …), which Harbor's scan also reports. Harbor's report exposes no
+  field to tell the two apart, so `harbor-report` distinguishes them by reading
+  the image's own OS package DB (`/lib/apk/db/installed` or
+  `/var/lib/dpkg/status`) and **drops the non-OS vulns** (it logs the count).
+  Practical consequence: for a fat application image (e.g. a PHP/Node app),
+  Harbor's total CVE count will **not** drop to zero after patching — the
+  language-package CVEs remain, by design, because this tool can't fix them.
+  Rebuild those from an updated base/app image instead. (Before v0.3.x these
+  were mislabeled as OS packages and fed to copa, which couldn't fix them and
+  re-patched the image every run without converging.)
 - **Skip-detection / auto-rescan only covers `tags.strategy: list`** entries
   in `bulk.yaml`. `pattern`/`latest`-discovered images are patched every run
   (`sweep-helper` logs why to stderr) since resolving their live source tags

@@ -19,6 +19,21 @@ TIMEOUT="${PATCH_TIMEOUT:-20m}"
 
 mkdir -p "$REPORTS_DIR"
 
+# Prune reports written by an older, buggier version of harbor-report before
+# copa reads the directory. copa's skip-detection trusts every *.json in here
+# by ArtifactName, so a stale report (e.g. the pre-fix ones that always
+# recorded zero vulnerabilities) would silently make copa skip a
+# still-vulnerable image. Keep "copaHarborReportVersion":"2" in sync with
+# reportSchemaVersion in cmd/harbor-report/main.go.
+REPORT_SCHEMA_VERSION="2"
+for f in "$REPORTS_DIR"/*.json; do
+  [ -e "$f" ] || continue
+  if ! grep -q "\"copaHarborReportVersion\": *\"${REPORT_SCHEMA_VERSION}\"" "$f"; then
+    echo "sweep: pruning stale report ${f} (missing schema version ${REPORT_SCHEMA_VERSION})"
+    rm -f "$f"
+  fi
+done
+
 echo "sweep: patching fleet from ${BULK_CONFIG}"
 # Only pass -r once the reports directory actually has something in it.
 # Passing -r to bulk mode switches every non-skipped job from a
