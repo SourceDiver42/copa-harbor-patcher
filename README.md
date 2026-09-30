@@ -11,14 +11,17 @@ second scanner.
 
 ## How it works
 
-- **CronJob mode** (`mode: cronjob`): runs `copa patch --config bulk.yaml
-  --push` against every image in a declarative `PatchConfig` (see
-  copacetic's [bulk-image-patching
-  docs](https://github.com/project-copacetic/copacetic/blob/main/website/docs/bulk-image-patching.md)),
-  then fetches Harbor's freshly computed vulnerability report for whatever
-  got pushed and drops it into a persistent reports volume, so the next
-  scheduled run's skip-detection can avoid re-patching images with no new
-  fixable vulnerabilities.
+- **CronJob mode** (`mode: cronjob`): for every image in a declarative
+  `PatchConfig` (see copacetic's [bulk-image-patching
+  docs](https://github.com/project-copacetic/copacetic/blob/main/website/docs/bulk-image-patching.md)
+  for the config schema), runs a **comprehensive** `copa patch` (updates all
+  OS packages, across every platform of a multi-arch image) and pushes the
+  result as `<tag>-patched`. Before patching each image it asks Harbor whether
+  the already-patched target still has any fixable **OS-package** CVEs; if not,
+  it skips. It deliberately does **not** use copa's report-driven bulk mode —
+  copa matches reports to platforms by architecture, which Harbor's report has
+  no per-platform notion of, so a multi-arch image would patch nothing ("No
+  scan report for platform"). See [Known limitations](#known-limitations).
 - **Webhook mode** (`mode: webhook`): a small Go HTTP server receives
   Harbor's webhook events, validates a shared secret, and patches the single
   image identified in the event.
@@ -248,11 +251,18 @@ kubectl label ns <namespace> pod-security.kubernetes.io/enforce=privileged
   Rebuild those from an updated base/app image instead. (Before v0.3.x these
   were mislabeled as OS packages and fed to copa, which couldn't fix them and
   re-patched the image every run without converging.)
-- **Skip-detection / auto-rescan only covers `tags.strategy: list`** entries
-  in `bulk.yaml`. `pattern`/`latest`-discovered images are patched every run
-  (`sweep-helper` logs why to stderr) since resolving their live source tags
-  ahead of time would require duplicating copa's own registry-discovery
-  logic.
+- **Re-patch churn for OS CVEs with no available fix.** Skip-detection skips an
+  image once its patched target has **0 fixable OS CVEs**. If some remaining OS
+  CVEs have a fix that Harbor knows about but that isn't available in the
+  image's distro release (so `apk`/`apt upgrade` can't install it), the count
+  never reaches 0 and the image is re-patched every run — harmless (the same
+  tag is overwritten, no `-N` accumulation) but wasteful. Fix by rebuilding
+  from an updated base image. (A "skip if unchanged since last patch" memo
+  could eliminate this; not implemented yet.)
+- **Skip-detection only covers `tags.strategy: list`** entries in `bulk.yaml`.
+  `pattern`/`latest`-discovered images are not swept (`sweep-helper` logs why
+  to stderr) since resolving their live source tags ahead of time would
+  require duplicating copa's own registry-discovery logic.
 - **Webhook mode has not yet been exercised against a real Harbor-triggered
   event** in this repo's own testing (only unit-tested and validated with a
   synthetic request) — the webhook payload parsing intentionally reads only
