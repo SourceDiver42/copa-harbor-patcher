@@ -133,6 +133,8 @@ See `chart/values.yaml` for the full set with comments. Key ones:
 | `harborserver.existingSecret` | Name of a pre-existing secret with plaintext `username`/`password` (+ optional `url`) keys, used instead of `harborserver.credentials`. No `.dockerconfigjson` required — it's inferred at startup. See [Using an existing credentials secret](#using-an-existing-credentials-secret). |
 | `harborserver.existingSecretKeys.{username,password,url}` | Key names to read from `harborserver.existingSecret`. Default `username`/`password`/`url`; set `url` to `""` if the secret has no registry-host key (falls back to `harborserver.registry`). |
 | `buildkit.rootless` | `false` (default) or `true` — see below |
+| `patch.platforms` | Platforms to patch, e.g. `["linux/amd64"]`; empty = all platforms in the image. Unlisted platforms are preserved unpatched. See [Multi-arch images](#multi-arch-images) |
+| `buildkit.emulation` | `false` (default) or `true` — install QEMU/binfmt so non-native platforms can be patched. See [Multi-arch images](#multi-arch-images) |
 | `cronjob.bulkConfig` | The `PatchConfig` YAML, embedded directly (not sensitive) |
 | `webhook.sharedSecret` / `webhook.existingSecret` | Bearer token Harbor's webhook policy must send as its "Auth Header"; auto-generated on install if left unset |
 | `extraVolumes` / `extraVolumeMounts` | Mounted on both the main container and the buildkitd sidecar — this is the integration point for CA trust (see below) and anything else your cluster needs injected |
@@ -181,6 +183,25 @@ footprint than full `privileged: true`.
    an open, unresolved issue for this exact workload. Fixable via
    `machine.sysctls`, but not reliably even then per that issue's reports.
    Use rootful on Talos.
+
+## Multi-arch images
+
+A comprehensive patch rebuilds **every** platform of a multi-arch image, and
+BuildKit can only build a platform it has a worker for. On a single-arch node
+(e.g. amd64) without emulation, patching `linux/arm64`/`linux/arm/v7` fails with
+`emulation is not enabled for platform …`, which fails the whole image. Two
+ways to handle it (combinable):
+
+- **`buildkit.emulation: true`** — adds a privileged `tonistiigi/binfmt` init
+  container that registers QEMU handlers at the node level, so the worker can
+  build every platform. Patches all arches; emulated builds are slower and the
+  registration is node-wide (kernel `binfmt_misc`).
+- **`patch.platforms: ["linux/amd64", …]`** — patch only the platforms you
+  list (copa `--platform`); the rest are **preserved unpatched** (and stay
+  vulnerable). Fast, no node changes — right when you only deploy one arch.
+
+If you leave both at defaults on a single-arch node, a multi-arch image's
+non-native platforms will fail to patch.
 
 ## Egress HTTP proxy
 
@@ -251,14 +272,18 @@ kubectl label ns <namespace> pod-security.kubernetes.io/enforce=privileged
   Rebuild those from an updated base/app image instead. (Before v0.3.x these
   were mislabeled as OS packages and fed to copa, which couldn't fix them and
   re-patched the image every run without converging.)
-- **Re-patch churn for OS CVEs with no available fix.** Skip-detection skips an
-  image once its patched target has **0 fixable OS CVEs**. If some remaining OS
-  CVEs have a fix that Harbor knows about but that isn't available in the
-  image's distro release (so `apk`/`apt upgrade` can't install it), the count
-  never reaches 0 and the image is re-patched every run — harmless (the same
-  tag is overwritten, no `-N` accumulation) but wasteful. Fix by rebuilding
-  from an updated base image. (A "skip if unchanged since last patch" memo
-  could eliminate this; not implemented yet.)
+- **"Fixable" in Harbor ≠ fixable by this tool.** Harbor/Trivy flag a CVE as
+  Fixable when a fixed version exists *in the vulnerability database* — not when
+  that fix is installable in the image's distro release. A comprehensive patch
+  installs the latest packages available in the release's repos; CVEs whose fix
+  isn't in that release (common on EOL or frozen bases — e.g. an Alpine 3.19 or
+  an old pinned image) **stay Fixable in Harbor even after patching**. So a
+  patched image's "Fixable" count often won't reach zero. The real fix is to
+  rebuild from an updated base image. To avoid re-patching such images every
+  run, skip-detection records the fixable-OS count it last patched at and skips
+  while it's unchanged (a `<target>.fixable` memo file in the reports volume) —
+  so each image is patched at most once per change in its CVE set. Delete the
+  memo file (or change the source) to force a re-patch.
 - **Skip-detection only covers `tags.strategy: list`** entries in `bulk.yaml`.
   `pattern`/`latest`-discovered images are not swept (`sweep-helper` logs why
   to stderr) since resolving their live source tags ahead of time would

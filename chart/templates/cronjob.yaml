@@ -52,6 +52,9 @@ spec:
           # `containers:` would leave the pod running forever even after
           # copa finishes successfully.
           initContainers:
+            {{- if .Values.buildkit.emulation }}
+            {{- include "copa-harbor.binfmtInitContainer" . | nindent 12 }}
+            {{- end }}
             {{- include "copa-harbor.buildkitSidecar" (merge (dict "nativeSidecar" true) .) | nindent 12 }}
           containers:
             - name: copa

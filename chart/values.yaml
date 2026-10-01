@@ -75,10 +75,28 @@ buildkit:
   # clusters you've confirmed support it (see README).
   rootless: false
   resources: {}
+  # Install QEMU/binfmt emulation (a privileged init container) so the
+  # BuildKit worker can patch platforms it can't build natively — e.g. arm64
+  # and arm/v7 of a multi-arch image on an amd64-only node. Without this,
+  # patching a non-native platform fails with "emulation is not enabled for
+  # platform …". Emulated builds are slower, and the init container registers
+  # binfmt handlers at the node (kernel) level. Leave false if you only patch
+  # the node's native arch (see patch.platforms) or your nodes already have
+  # binfmt configured.
+  emulation: false
+  # Image for the emulation init container (only used when emulation: true).
+  binfmtImage: "tonistiigi/binfmt:qemu-v9.2.2"
 
 patch:
   # Per-job timeout passed to `copa patch --timeout`.
   timeout: 20m
+  # Which platforms of a multi-arch image to patch, e.g.
+  # ["linux/amd64","linux/arm64"]. Empty = all platforms present in the image.
+  # copa must be able to build each listed platform: that means either a native
+  # BuildKit worker for it or QEMU emulation (see buildkit.emulation) — without
+  # one, non-native platforms fail with "emulation is not enabled for platform
+  # …". Platforms NOT listed are preserved unpatched (and stay vulnerable).
+  platforms: []
 
 cronjob:
   schedule: "0 2 * * *"

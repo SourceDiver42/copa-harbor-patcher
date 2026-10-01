@@ -44,6 +44,10 @@ spec:
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if .Values.buildkit.emulation }}
+      initContainers:
+        {{- include "copa-harbor.binfmtInitContainer" . | nindent 8 }}
+      {{- end }}
       containers:
         - name: webhook
           image: {{ include "copa-harbor.image" . }}
