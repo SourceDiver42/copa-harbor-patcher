@@ -15,12 +15,19 @@ TAG="${2:?usage: patch-one.sh <repo> <tag>}"
 REF="${REPO}:${TAG}"
 PATCHED_TAG="${TAG}-patched"
 
+# Restrict to specific platforms (copa --platform, comma-separated); empty =
+# all platforms present. Non-native platforms need QEMU emulation.
+PLATFORM_ARGS=()
+if [ -n "${PATCH_PLATFORMS:-}" ]; then
+  PLATFORM_ARGS=(--platform "$PATCH_PLATFORMS")
+fi
+
 echo "patch-one: comprehensively patching ${REF} -> ${REPO}:${PATCHED_TAG}"
 copa patch \
   -i "$REF" \
   -t "$PATCHED_TAG" \
   --scanner native \
   --timeout "${PATCH_TIMEOUT:-15m}" \
-  --push
+  --push ${PLATFORM_ARGS[@]+"${PLATFORM_ARGS[@]}"}
 
 echo "patch-one: done, pushed ${REPO}:${PATCHED_TAG}"

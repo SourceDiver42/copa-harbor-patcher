@@ -302,6 +302,27 @@ caller owns the `env:` key so it can add container-specific vars too.
   value: {{ .Values.harborserver.insecureSkipVerify | quote }}
 - name: PATCH_TIMEOUT
   value: {{ .Values.patch.timeout | quote }}
+# Comma-joined platform list for `copa patch --platform`; empty = all platforms
+# present in the image (see patch.platforms and sweep.sh / patch-one.sh).
+- name: PATCH_PLATFORMS
+  value: {{ join "," .Values.patch.platforms | quote }}
+{{- end -}}
+
+{{/*
+QEMU/binfmt emulation init container. Registers emulation handlers at the node
+(kernel) level so the BuildKit worker can build/patch non-native platforms.
+Privileged and root — the pod is already in a privileged-exempt namespace for
+buildkitd, and binfmt_misc registration needs real root.
+*/}}
+{{- define "copa-harbor.binfmtInitContainer" -}}
+- name: binfmt
+  image: {{ .Values.buildkit.binfmtImage | quote }}
+  args: ["--install", "all"]
+  securityContext:
+    privileged: true
+    runAsUser: 0
+    runAsGroup: 0
+    runAsNonRoot: false
 {{- end -}}
 
 {{/*
