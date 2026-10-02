@@ -35,7 +35,10 @@ if [ -n "${PATCH_PLATFORMS:-}" ]; then
 fi
 
 echo "sweep: planning from ${BULK_CONFIG}"
-PLAN="$(sweep-helper -config "$BULK_CONFIG")"
+# When exactly one platform is requested, sweep-helper pins each source to that
+# platform's digest so copa produces a single-arch result (a multi-arch output
+# would still carry the other, unpatched arches and keep Harbor's count high).
+PLAN="$(sweep-helper -config "$BULK_CONFIG" -platforms "${PATCH_PLATFORMS:-}")"
 
 if [ -z "$PLAN" ]; then
   echo "sweep: nothing to do (no list-strategy images with a target registry)"
@@ -79,9 +82,18 @@ while IFS=$'\t' read -r SOURCE TARGET; do
   # and pushes to TARGET (a full reference, so it may be a different repo),
   # overwriting the tag. No `-r` — no report-driven per-platform matching and
   # no "-patched-N" version churn.
+  # A digest-pinned source (contains '@') is already single-arch — copa emits a
+  # single-arch result, so don't pass --platform. Otherwise apply the scope (if
+  # any) so copa patches the requested platforms and preserves the rest.
+  platform_args=()
+  case "$SOURCE" in
+    *@*) : ;;                                   # single-arch digest: no --platform
+    *)   platform_args=(${PLATFORM_ARGS[@]+"${PLATFORM_ARGS[@]}"}) ;;
+  esac
+
   echo "sweep: patching ${SOURCE} -> ${TARGET}"
   if ! copa patch -i "$SOURCE" -t "$TARGET" --push --scanner native \
-        --timeout "$TIMEOUT" ${PLATFORM_ARGS[@]+"${PLATFORM_ARGS[@]}"}; then
+        --timeout "$TIMEOUT" ${platform_args[@]+"${platform_args[@]}"}; then
     echo "sweep: WARNING: patch failed for ${SOURCE}; continuing with the rest of the fleet" >&2
     rm -f "$state"
     continue

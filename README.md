@@ -200,6 +200,15 @@ ways to handle it (combinable):
   list (copa `--platform`); the rest are **preserved unpatched** (and stay
   vulnerable). Fast, no node changes — right when you only deploy one arch.
 
+**Single arch → single-arch output.** If you list exactly **one** platform, the
+sweep pins the source to that platform's digest and produces a **single-arch
+patched image** (not a manifest list). This matters: with a preserved
+manifest list, Harbor scans the whole index, so the *other* arches' CVEs keep
+the count high and the patched tag looks just as vulnerable as the source — you
+can't tell it apart without pulling the per-arch child. A single-arch output
+scans cleanly. So on an amd64-only cluster, `patch.platforms: ["linux/amd64"]`
+gives you an amd64 `…-patched` image Harbor reports accurately.
+
 If you leave both at defaults on a single-arch node, a multi-arch image's
 non-native platforms will fail to patch.
 
