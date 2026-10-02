@@ -18,7 +18,34 @@
       "type": "object",
       "required": ["registry"],
       "properties": {
-        "registry": { "type": "string", "minLength": 1 }
+        "registry": { "type": "string", "minLength": 1 },
+        "existingSecret": { "type": "string" },
+        "credentials": {
+          "type": "object",
+          "properties": {
+            "username": { "type": "string" },
+            "password": { "type": "string" }
+          }
+        }
+      },
+      "$comment": "When existingSecret is empty/absent, inline credentials must be provided (replaces the template-level `required`).",
+      "if": {
+        "properties": {
+          "existingSecret": { "const": "" }
+        }
+      },
+      "then": {
+        "required": ["credentials"],
+        "properties": {
+          "credentials": {
+            "type": "object",
+            "required": ["username", "password"],
+            "properties": {
+              "username": { "type": "string", "minLength": 1 },
+              "password": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
       }
     }
   }
