@@ -120,9 +120,14 @@ cronjob:
     target:
       registry: ""
     images: []
+  # Persists the per-target skip-detection state (a small sorted list of
+  # fixable CVE IDs, one file per patched image) across CronJob runs. Only
+  # these tiny ".cves" files are stored — not full report JSONs — and state
+  # for images no longer in bulk.yaml is rotated out each run, so usage stays
+  # small and bounded. 1Gi is already generous.
   reportsVolume:
     storageClassName: ""
-    size: 5Gi
+    size: 1Gi
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
   concurrencyPolicy: Forbid
