@@ -203,6 +203,16 @@ ways to handle it (combinable):
 If you leave both at defaults on a single-arch node, a multi-arch image's
 non-native platforms will fail to patch.
 
+**Talos (and other nodes that already provide binfmt):** keep
+`buildkit.emulation: false`. The Talos **binfmt system extension** already
+registers QEMU emulators node-wide (with the `F` flag, so BuildKit uses them
+directly) — the rootful sidecar will then patch every platform with no init
+container. Enabling `buildkit.emulation` on Talos actually *breaks* it: the
+`tonistiigi/binfmt` container tries to mount `binfmt_misc` on Talos's
+locked-down `/proc` and dies with `cannot mount binfmt_misc filesystem … no
+such device`. Same applies to any cluster running a node-level binfmt
+DaemonSet — rely on it and leave this off.
+
 ## Egress HTTP proxy
 
 In a proxy-only egress network, copa's patch build fails at image resolution

@@ -81,8 +81,12 @@ buildkit:
   # patching a non-native platform fails with "emulation is not enabled for
   # platform …". Emulated builds are slower, and the init container registers
   # binfmt handlers at the node (kernel) level. Leave false if you only patch
-  # the node's native arch (see patch.platforms) or your nodes already have
-  # binfmt configured.
+  # the node's native arch (see patch.platforms) or your nodes already provide
+  # binfmt. In particular, on Talos with the binfmt system extension (or any
+  # cluster running a node-level binfmt DaemonSet), keep this FALSE: the
+  # extension already registers QEMU node-wide, and this init container would
+  # fail trying to mount binfmt_misc on Talos's locked-down /proc ("cannot
+  # mount binfmt_misc filesystem ... no such device").
   emulation: false
   # Image for the emulation init container (only used when emulation: true).
   binfmtImage: "tonistiigi/binfmt:qemu-v9.2.2"
