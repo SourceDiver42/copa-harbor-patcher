@@ -2,5 +2,5 @@ apiVersion: v2
 name: copa-harbor-patcher
 description: Automated copa vulnerability patching for images in a Harbor registry (CronJob sweep and/or Harbor-webhook-triggered patching)
 type: application
-version: 0.5.3
-appVersion: "0.5.3"
+version: 0.6.0
+appVersion: "0.6.0"

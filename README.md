@@ -298,11 +298,22 @@ kubectl label ns <namespace> pod-security.kubernetes.io/enforce=privileged
   isn't in that release (common on EOL or frozen bases — e.g. an Alpine 3.19 or
   an old pinned image) **stay Fixable in Harbor even after patching**. So a
   patched image's "Fixable" count often won't reach zero. The real fix is to
-  rebuild from an updated base image. To avoid re-patching such images every
-  run, skip-detection records the fixable-OS count it last patched at and skips
-  while it's unchanged (a `<target>.fixable` memo file in the reports volume) —
-  so each image is patched at most once per change in its CVE set. Delete the
-  memo file (or change the source) to force a re-patch.
+  rebuild from an updated base image.
+
+  To avoid re-patching such images every run, skip-detection compares the
+  **set of fixable OS CVE IDs** on the patched target against the set it
+  recorded at the last patch (a small sorted `<target>.cves` file in the
+  reports volume): it re-patches only when the set **changes** — a newly
+  disclosed CVE, or one that dropped — and skips while the set is identical (a
+  stable residual with no installable fix). So a newly-disclosed CVE triggers a
+  re-patch on the next run; a permanent EOL residual does not. `rm` the
+  `<target>.cves` file (or change the source image) to force a re-patch.
+
+  **Reports volume / rotation:** only those tiny `.cves` sets are persisted
+  (the full report JSON is written to scratch and discarded), and state for
+  targets no longer in `bulk.yaml` is rotated out at the start of each run — so
+  `cronjob.reportsVolume` stays small and bounded regardless of fleet size or
+  how many CVEs an image has.
 - **Skip-detection only covers `tags.strategy: list`** entries in `bulk.yaml`.
   `pattern`/`latest`-discovered images are not swept (`sweep-helper` logs why
   to stderr) since resolving their live source tags ahead of time would
