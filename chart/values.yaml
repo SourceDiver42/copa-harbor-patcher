@@ -99,7 +99,15 @@ patch:
   # copa must be able to build each listed platform: that means either a native
   # BuildKit worker for it or QEMU emulation (see buildkit.emulation) — without
   # one, non-native platforms fail with "emulation is not enabled for platform
-  # …". Platforms NOT listed are preserved unpatched (and stay vulnerable).
+  # …".
+  #
+  # Single-platform shortcut: when you list EXACTLY ONE platform, the patched
+  # image is pushed as a **single-arch** image (not a manifest list) — the
+  # source is pinned to that platform's digest first. This is almost always
+  # what you want on a single-arch cluster: otherwise copa preserves the other
+  # (unpatched) architectures in the manifest list, and Harbor's scan of the
+  # whole index keeps reporting their CVEs so the count never drops. With two
+  # or more platforms, the rest are preserved unpatched as usual.
   platforms: []
 
 cronjob:
