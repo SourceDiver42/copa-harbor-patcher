@@ -171,3 +171,44 @@ extraVolumeMounts: []
 #     - {name: http_proxy,  value: "http://proxy.internal:3128"}
 #     - {name: no_proxy,    value: "harbor.example.com,.svc,.cluster.local,10.0.0.0/8"}
 extraEnv: []
+
+# Optional Cilium egress policy (CiliumNetworkPolicy) for the patcher's pods.
+# Requires Cilium with FQDN/DNS-based policy support. IMPORTANT: once a Cilium
+# policy with egress rules selects these pods, Cilium DEFAULT-DENIES all other
+# egress from them — so every destination the patcher needs must be allowed
+# here. Toggle the well-known ones below and add any extras; leave the whole
+# thing disabled if you don't run Cilium or manage egress elsewhere.
+networkPolicy:
+  enabled: false
+  # Allow DNS to kube-dns — required for the FQDN rules to resolve at all.
+  allowDNS: true
+  # The Harbor server itself: host[:port] taken from harborserver.registry
+  # (covers both registry pull/push and the Harbor API, same host:port). For an
+  # in-cluster Harbor, prefer a toEndpoints rule via extraEgress instead.
+  harbor: true
+  # endoflife.date — copa queries it to detect EOL base images. Allowed by
+  # default so the EOL check doesn't hang against a default-deny egress.
+  endoflifeDate: true
+  # Well-known container registries (manifest hosts + their blob CDNs). Enable
+  # the ones your source images / copa tooling images come from. ghcr is on by
+  # default because copa pulls its tooling image from ghcr.io.
+  registries:
+    ghcr: true
+    dockerhub: false
+    quay: false
+    gcr: false
+    registryK8s: false
+  # github.com / release & raw-asset hosts (distinct from the ghcr registry).
+  github: false
+  # Distro package mirrors — needed by the in-build apt/apk upgrade. Enable the
+  # ones matching your images' base distros.
+  distros:
+    alpine: true
+    debian: true
+    ubuntu: false
+  # Extra FQDNs to allow on :443. Each entry is a string (exact name) or a map,
+  # e.g. "mirror.internal" or {matchPattern: "*.corp.example.com"}.
+  extraFQDNs: []
+  # Fully custom raw CiliumNetworkPolicy egress entries (CIDRs, in-cluster
+  # toEndpoints, non-443 ports, ...) appended verbatim to the egress list.
+  extraEgress: []

@@ -248,6 +248,53 @@ registry + Harbor-API calls. The package-download RUN steps inside the patch
 build (apt/apk reaching distro mirrors) are a separate concern not addressed by
 this — if your mirrors are only reachable via the proxy, raise an issue.
 
+## Cilium egress NetworkPolicy
+
+If you run Cilium, `networkPolicy.enabled: true` renders a `CiliumNetworkPolicy`
+that pins the patcher's egress to just what it needs, via FQDN rules. **Caveat:
+once a Cilium policy with egress rules selects these pods, Cilium default-denies
+all their other egress** — so every destination must be allowed here. Toggle
+the well-known ones and add extras:
+
+```yaml
+networkPolicy:
+  enabled: true
+  allowDNS: true          # DNS to kube-dns (required for the FQDN rules)
+  harbor: true            # the Harbor host:port from harborserver.registry
+  endoflifeDate: true     # copa's EOL base-image check
+  registries:
+    ghcr: true            # copa pulls its tooling image from ghcr.io
+    dockerhub: false
+    quay: false
+    gcr: false
+    registryK8s: false
+  github: false
+  distros:                # for the in-build apt/apk upgrade
+    alpine: true
+    debian: true
+    ubuntu: false
+  extraFQDNs:             # string = exact name, or a map
+    - mirror.corp.internal
+    - matchPattern: "*.corp.example.com"
+  extraEgress: []         # raw CNP egress entries (CIDRs, toEndpoints, …)
+```
+
+Notes:
+- Each registry toggle allows that registry's **manifest host and blob CDN**
+  (e.g. ghcr → `ghcr.io` + `*.githubusercontent.com`, Docker Hub →
+  `registry-1.docker.io` + `production.cloudflare.docker.com`). CDN hostnames
+  for registries can change; if a pull is blocked, add the missing name to
+  `extraFQDNs`.
+- **Distro mirrors matter**: the actual `apk`/`apt upgrade` inside the patch
+  build fetches packages from the distro mirror, so enable the `distros.*` that
+  match your images' bases or patching fails with a network error.
+- **In-cluster Harbor**: `harbor: true` uses an FQDN rule on the
+  `harborserver.registry` host — right for an external Harbor. For an
+  in-cluster Harbor, set `harbor: false` and add a `toEndpoints` rule (selecting
+  the Harbor pods) under `extraEgress`.
+- Requires Cilium with FQDN policy (L7 DNS proxy) enabled; the CRD
+  (`cilium.io/v2`) must exist in the cluster.
+
 ## Pod Security Admission
 
 **Both** rootful and rootless buildkitd need a namespace-level PodSecurity

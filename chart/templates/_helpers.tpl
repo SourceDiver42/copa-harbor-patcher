@@ -43,6 +43,15 @@ moby/buildkit:v0.31.1
 {{- .Values.harborserver.apiBase | default (printf "https://%s" .Values.harborserver.registry) -}}
 {{- end -}}
 
+{{/* Harbor host and port split from harborserver.registry ("host" or "host:port"). */}}
+{{- define "copa-harbor.harborHost" -}}
+{{- (splitList ":" .Values.harborserver.registry) | first -}}
+{{- end -}}
+{{- define "copa-harbor.harborPort" -}}
+{{- $p := splitList ":" .Values.harborserver.registry -}}
+{{- if gt (len $p) 1 -}}{{ index $p 1 }}{{- else -}}443{{- end -}}
+{{- end -}}
+
 {{- define "copa-harbor.registrySecretName" -}}
 {{- .Values.harborserver.existingSecret | default (printf "%s-registry-creds" (include "copa-harbor.fullname" .)) -}}
 {{- end -}}

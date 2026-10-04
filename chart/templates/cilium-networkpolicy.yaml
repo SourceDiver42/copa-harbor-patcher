@@ -1,0 +1,92 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $np := .Values.networkPolicy }}
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "copa-harbor.fullname" . }}-egress
+  labels:
+    {{- include "copa-harbor.labels" . | nindent 4 }}
+spec:
+  # Selects every workload pod this chart creates (CronJob job pods and the
+  # webhook Deployment pod) — they share these labels.
+  endpointSelector:
+    matchLabels:
+      {{- include "copa-harbor.selectorLabels" . | nindent 6 }}
+  egress:
+    {{- if $np.allowDNS }}
+    # DNS to kube-dns. The L7 dns rule lets Cilium's proxy observe responses so
+    # the toFQDNs rules below can map allowed names to IPs.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s:k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+    {{- end }}
+    {{- if $np.harbor }}
+    # Harbor registry + API (host[:port] from harborserver.registry).
+    - toFQDNs:
+        - matchName: {{ include "copa-harbor.harborHost" . | quote }}
+      toPorts:
+        - ports:
+            - port: {{ include "copa-harbor.harborPort" . | quote }}
+              protocol: TCP
+    {{- end }}
+    {{- /* Accumulate the :443 FQDN allowlist from the toggles. */ -}}
+    {{- $fqdns := list }}
+    {{- if $np.endoflifeDate }}
+    {{- $fqdns = append $fqdns (dict "matchName" "endoflife.date") }}
+    {{- end }}
+    {{- if $np.registries.ghcr }}
+    {{- $fqdns = concat $fqdns (list (dict "matchName" "ghcr.io") (dict "matchPattern" "*.githubusercontent.com")) }}
+    {{- end }}
+    {{- if $np.registries.dockerhub }}
+    {{- $fqdns = concat $fqdns (list (dict "matchName" "registry-1.docker.io") (dict "matchName" "index.docker.io") (dict "matchName" "auth.docker.io") (dict "matchName" "production.cloudflare.docker.com")) }}
+    {{- end }}
+    {{- if $np.registries.quay }}
+    {{- $fqdns = concat $fqdns (list (dict "matchName" "quay.io") (dict "matchPattern" "*.quay.io")) }}
+    {{- end }}
+    {{- if $np.registries.gcr }}
+    {{- $fqdns = concat $fqdns (list (dict "matchName" "gcr.io") (dict "matchPattern" "*.gcr.io") (dict "matchName" "storage.googleapis.com")) }}
+    {{- end }}
+    {{- if $np.registries.registryK8s }}
+    {{- $fqdns = concat $fqdns (list (dict "matchName" "registry.k8s.io") (dict "matchPattern" "*.pkg.dev") (dict "matchName" "storage.googleapis.com")) }}
+    {{- end }}
+    {{- if $np.github }}
+    {{- $fqdns = concat $fqdns (list (dict "matchName" "github.com") (dict "matchName" "codeload.github.com") (dict "matchPattern" "*.githubusercontent.com")) }}
+    {{- end }}
+    {{- if $np.distros.alpine }}
+    {{- $fqdns = append $fqdns (dict "matchName" "dl-cdn.alpinelinux.org") }}
+    {{- end }}
+    {{- if $np.distros.debian }}
+    {{- $fqdns = concat $fqdns (list (dict "matchName" "deb.debian.org") (dict "matchName" "security.debian.org")) }}
+    {{- end }}
+    {{- if $np.distros.ubuntu }}
+    {{- $fqdns = concat $fqdns (list (dict "matchName" "archive.ubuntu.com") (dict "matchName" "security.ubuntu.com") (dict "matchName" "ports.ubuntu.com")) }}
+    {{- end }}
+    {{- range $np.extraFQDNs }}
+    {{- if kindIs "string" . }}
+    {{- $fqdns = append $fqdns (dict "matchName" .) }}
+    {{- else }}
+    {{- $fqdns = append $fqdns . }}
+    {{- end }}
+    {{- end }}
+    {{- if $fqdns }}
+    - toFQDNs:
+        {{- toYaml $fqdns | nindent 8 }}
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    {{- end }}
+    {{- with $np.extraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}
