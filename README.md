@@ -295,6 +295,31 @@ Notes:
 - Requires Cilium with FQDN policy (L7 DNS proxy) enabled; the CRD
   (`cilium.io/v2`) must exist in the cluster.
 
+### Egress gateway (route egress through a specific node)
+
+Separately (`egressGateway.enabled`), the chart can render a
+`CiliumEgressGatewayPolicy` so the patcher's egress leaves the cluster through a
+specific **gateway node** — e.g. one with a stable source IP that your Harbor or
+upstream registries allowlist:
+
+```yaml
+egressGateway:
+  enabled: true
+  nodeSelector:                       # REQUIRED — your egress node's label
+    matchLabels:
+      node-role.kubernetes.io/egress: "true"
+  destinationCIDRs: ["0.0.0.0/0"]     # route all egress through the gateway
+  excludedCIDRs:                      # keep in-cluster traffic direct
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
+    - "192.168.0.0/16"
+  interface: ""                       # or egressIP: "a.b.c.d" — pin the source
+```
+
+Requires Cilium with the egress-gateway feature enabled. It's independent of the
+`networkPolicy` above — use either or both. If enabled without a `nodeSelector`,
+the chart fails the render on purpose (an empty selector would match every node).
+
 ## Pod Security Admission
 
 **Both** rootful and rootless buildkitd need a namespace-level PodSecurity

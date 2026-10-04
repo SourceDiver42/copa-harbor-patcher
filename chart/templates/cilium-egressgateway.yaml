@@ -1,0 +1,37 @@
+{{- if .Values.egressGateway.enabled }}
+{{- $eg := .Values.egressGateway }}
+{{- if not $eg.nodeSelector.matchLabels }}
+{{- fail "egressGateway.enabled is true but egressGateway.nodeSelector.matchLabels is empty — set it to your gateway node's label (an empty selector would match every node)." }}
+{{- end }}
+apiVersion: cilium.io/v2
+kind: CiliumEgressGatewayPolicy
+metadata:
+  # CiliumEgressGatewayPolicy is cluster-scoped; the name is prefixed with the
+  # namespace to stay unique across releases in different namespaces.
+  name: {{ .Release.Namespace }}-{{ include "copa-harbor.fullname" . }}-egress-gw
+  labels:
+    {{- include "copa-harbor.labels" . | nindent 4 }}
+spec:
+  selectors:
+    # This chart's workload pods, scoped to the release namespace (the policy
+    # is cluster-scoped, so without the namespace it could match same-labelled
+    # pods elsewhere).
+    - podSelector:
+        matchLabels:
+          {{- include "copa-harbor.selectorLabels" . | nindent 10 }}
+          io.kubernetes.pod.namespace: {{ .Release.Namespace }}
+  destinationCIDRs:
+    {{- toYaml $eg.destinationCIDRs | nindent 4 }}
+  {{- with $eg.excludedCIDRs }}
+  excludedCIDRs:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  egressGateway:
+    nodeSelector:
+      {{- toYaml $eg.nodeSelector | nindent 6 }}
+    {{- if $eg.interface }}
+    interface: {{ $eg.interface | quote }}
+    {{- else if $eg.egressIP }}
+    egressIP: {{ $eg.egressIP | quote }}
+    {{- end }}
+{{- end }}

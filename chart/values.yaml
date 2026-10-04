@@ -212,3 +212,27 @@ networkPolicy:
   # Fully custom raw CiliumNetworkPolicy egress entries (CIDRs, in-cluster
   # toEndpoints, non-443 ports, ...) appended verbatim to the egress list.
   extraEgress: []
+
+# Optional Cilium Egress Gateway (CiliumEgressGatewayPolicy): route this
+# workload's egress out through a specific gateway node (e.g. one with a known
+# source IP that your Harbor / upstreams allowlist). Independent of
+# networkPolicy above — you can use either or both. Requires Cilium with the
+# egress gateway feature enabled.
+egressGateway:
+  enabled: false
+  # Node(s) that act as the egress gateway — set this to the label on your
+  # egress node. REQUIRED when enabled (an empty selector would match every
+  # node). e.g. { matchLabels: { "node-role.kubernetes.io/egress": "true" } }
+  nodeSelector:
+    matchLabels: {}
+  # Which destinations to route through the gateway. Default: all egress.
+  destinationCIDRs:
+    - "0.0.0.0/0"
+  # CIDRs to exclude from gateway routing (keep them direct) — typically your
+  # in-cluster pod/service/node ranges so cluster traffic isn't SNATed through
+  # the gateway. e.g. ["10.0.0.0/8","172.16.0.0/12","192.168.0.0/16"]
+  excludedCIDRs: []
+  # Optionally pin the egress source on the gateway node — set at most ONE.
+  # interface: the gateway node NIC to egress from; egressIP: a specific IP.
+  interface: ""
+  egressIP: ""
