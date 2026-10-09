@@ -93,6 +93,64 @@ true
 {{- .Values.webhook.existingSecret | default (printf "%s-webhook-secret" (include "copa-harbor.fullname" .)) -}}
 {{- end -}}
 
+{{- define "copa-harbor.mailSecretName" -}}
+{{- .Values.smtp.existingSecret | default (printf "%s-smtp" (include "copa-harbor.fullname" .)) -}}
+{{- end -}}
+
+{{/*
+SMTP env for the sweep container, emitted only when mail.enabled. The mailer
+(send-report.sh) reads these; auth keys are optional so a no-auth relay works.
+Caller owns the `env:` key.
+*/}}
+{{- define "copa-harbor.smtpEnv" -}}
+{{- if .Values.mail.enabled -}}
+{{- $secret := include "copa-harbor.mailSecretName" . -}}
+{{- $keys := .Values.smtp.keys -}}
+- name: MAIL_ENABLED
+  value: "1"
+- name: MAIL_SUBJECT_PREFIX
+  value: {{ .Values.mail.subjectPrefix | quote }}
+- name: SMTP_URL
+  valueFrom:
+    secretKeyRef:
+      name: {{ $secret }}
+      key: {{ $keys.url }}
+- name: SMTP_USER
+  valueFrom:
+    secretKeyRef:
+      name: {{ $secret }}
+      key: {{ $keys.user }}
+      optional: true
+- name: SMTP_PASS
+  valueFrom:
+    secretKeyRef:
+      name: {{ $secret }}
+      key: {{ $keys.pass }}
+      optional: true
+- name: MAIL_FROM
+  valueFrom:
+    secretKeyRef:
+      name: {{ $secret }}
+      key: {{ $keys.from }}
+- name: MAIL_TO
+  valueFrom:
+    secretKeyRef:
+      name: {{ $secret }}
+      key: {{ $keys.to }}
+{{- if .Values.smtp.insecure }}
+- name: SMTP_INSECURE
+  value: "1"
+{{- end }}
+{{- if .Values.smtp.caSecret }}
+- name: SMTP_CA_FILE
+  value: /etc/smtp-ca/{{ .Values.smtp.caSecretKey }}
+{{- else if .Values.smtp.caConfigMap }}
+- name: SMTP_CA_FILE
+  value: /etc/smtp-ca/{{ .Values.smtp.caConfigMapKey }}
+{{- end }}
+{{- end -}}
+{{- end -}}
+
 {{/*
 Pod-level securityContext applied to every workload. As close to the
 PodSecurity "restricted" profile as the buildkitd sidecar allows (see

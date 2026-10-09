@@ -35,6 +35,11 @@ TIMEOUT="${PATCH_TIMEOUT:-20m}"
 
 mkdir -p "$REPORTS_DIR"
 
+# Accumulated outcomes for the optional post-sweep email report. Only sent when
+# MAIL_ENABLED=1 (the chart sets it, along with SMTP_* , when mail.enabled).
+PATCHED=""; FAILED=""
+N_PATCHED=0; N_FAILED=0; N_SKIPPED=0
+
 # Restrict patching to specific platforms (copa --platform, comma-separated);
 # empty = all platforms present in the image. Non-native platforms need QEMU
 # emulation (buildkit.emulation) or they fail to build.
@@ -115,11 +120,13 @@ while IFS=$'\t' read -r SOURCE TARGET; do
     if [ "$cur_count" -eq 0 ]; then
       echo "sweep: skip ${SOURCE} — patched target ${TARGET} has 0 fixable OS CVEs"
       rm -f "$tmpreport" "$baseline"
+      N_SKIPPED=$((N_SKIPPED + 1))
       continue
     fi
     if [ -f "$baseline" ] && [ "$cur_cves" = "$(cat "$baseline")" ]; then
       echo "sweep: skip ${SOURCE} — ${TARGET} still has ${cur_count} fixable OS CVE(s), an identical set to its last patch (nothing new; any residual has no installable fix). 'rm ${baseline}' to force."
       rm -f "$tmpreport"
+      N_SKIPPED=$((N_SKIPPED + 1))
       continue
     fi
     if [ -f "$baseline" ]; then
@@ -147,8 +154,12 @@ while IFS=$'\t' read -r SOURCE TARGET; do
         --timeout "$TIMEOUT" ${platform_args[@]+"${platform_args[@]}"}; then
     echo "sweep: WARNING: patch failed for ${SOURCE}; continuing with the rest of the fleet" >&2
     rm -f "$baseline"
+    FAILED+="  ${SOURCE} -> ${TARGET}"$'\n'
+    N_FAILED=$((N_FAILED + 1))
     continue
   fi
+  PATCHED+="  ${SOURCE} -> ${TARGET}"$'\n'
+  N_PATCHED=$((N_PATCHED + 1))
 
   # Record the fixable CVE set we just acted on as the new baseline, so an
   # identical set next run is skipped and only a new/changed set re-triggers.
@@ -159,4 +170,31 @@ while IFS=$'\t' read -r SOURCE TARGET; do
   fi
 done <<< "$PLAN"
 
-echo "sweep: done"
+echo "sweep: done (${N_PATCHED} patched, ${N_SKIPPED} skipped, ${N_FAILED} failed)"
+
+# Optional email report. Enabled by the chart (mail.enabled) via MAIL_ENABLED +
+# SMTP_* env. Best-effort: a mail failure is logged but must not fail the sweep.
+if [ "${MAIL_ENABLED:-}" = "1" ]; then
+  report="$(mktemp)"
+  {
+    echo "copa-harbor patch sweep"
+    echo "Generated: $(date -u +'%F %T UTC')"
+    echo "Harbor:    ${HARBOR_REGISTRY_HOST:-?}"
+    echo
+    echo "== Patched (${N_PATCHED}) =="
+    if [ -n "$PATCHED" ]; then printf '%s' "$PATCHED"; else echo "  (none)"; fi
+    echo
+    echo "== Failed (${N_FAILED}) =="
+    if [ -n "$FAILED" ]; then printf '%s' "$FAILED"; else echo "  (none)"; fi
+    echo
+    echo "Skipped (already clean or unchanged): ${N_SKIPPED}"
+  } > "$report"
+
+  subject="${MAIL_SUBJECT_PREFIX:-[copa-harbor]} Patch sweep: ${N_PATCHED} patched, ${N_FAILED} failed"
+  if /usr/local/bin/send-report.sh "$subject" "$report"; then
+    echo "sweep: emailed report to ${MAIL_TO:-?}"
+  else
+    echo "sweep: WARNING: failed to email report" >&2
+  fi
+  rm -f "$report"
+fi

@@ -44,7 +44,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/webhook-server ./c
     && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/harbor-report ./cmd/harbor-report
 
 FROM ${ALPINE_IMAGE}
-RUN apk add --no-cache ca-certificates bash \
+RUN apk add --no-cache ca-certificates bash curl \
     && rm -rf /var/cache/apk/*
 COPY --from=copa-fetcher /out/copa /usr/local/bin/copa
 COPY --from=tools-builder /out/webhook-server /usr/local/bin/webhook-server
@@ -53,6 +53,7 @@ COPY --from=tools-builder /out/harbor-report /usr/local/bin/harbor-report
 COPY scripts/sweep.sh /usr/local/bin/sweep.sh
 COPY scripts/patch-one.sh /usr/local/bin/patch-one.sh
 COPY scripts/render-docker-config.sh /usr/local/bin/render-docker-config.sh
+COPY scripts/send-report.sh /usr/local/bin/send-report.sh
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/*.sh \
     && addgroup -g 1000 copa && adduser -D -u 1000 -G copa copa

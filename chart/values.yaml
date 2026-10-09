@@ -144,6 +144,54 @@ webhook:
     hosts: []
     tls: []
 
+# Email a summary of what the CronJob sweep did (which images were re-patched,
+# which failed, how many were skipped). Off by default. The SMTP config mirrors
+# the ceph-reports chart so the two share one shape.
+mail:
+  # -- Enable the post-sweep email report (CronJob only).
+  enabled: false
+  # -- Subject prefix for the report email.
+  subjectPrefix: "[copa-harbor]"
+
+smtp:
+  # -- Use a pre-existing Secret with the SMTP keys below. Highest priority source.
+  existingSecret: ""
+  # -- Keys read from the SMTP secret (injected as env for the mailer).
+  keys:
+    url: SMTP_URL
+    user: SMTP_USER
+    pass: SMTP_PASS
+    from: MAIL_FROM
+    to: MAIL_TO
+  secret:
+    # -- Render an inline Secret from the values below. DEV ONLY — prefer existingSecret.
+    create: false
+    # -- SMTP URL: smtp://host:587 (STARTTLS) or smtps://host:465 (implicit TLS).
+    url: "smtp://smtp.example.com:587"
+    # -- SMTP username (optional; no auth if empty).
+    user: ""
+    # -- SMTP password.
+    pass: ""
+    # -- Envelope/From address.
+    from: "copa-harbor@example.com"
+    # -- Recipient(s), comma-separated.
+    to: "you@example.com"
+  # -- INSECURE, TESTING ONLY: skip SMTP TLS certificate verification. Exposes
+  # credentials to MITM. Prefer caSecret/caConfigMap below.
+  insecure: false
+  # -- Secret holding a CA (bundle) to trust for SMTP TLS, mounted into the sweep
+  # container and passed to the mailer as --cacert. Your internal CA alone is
+  # enough (it is not used for anything but the SMTP connection).
+  caSecret: ""
+  # -- Key within caSecret holding the PEM bundle.
+  caSecretKey: ca.crt
+  # -- ConfigMap holding a CA bundle (alternative to caSecret). Pairs with a
+  # cert-manager trust-manager Bundle, whose default target is a ConfigMap.
+  # Ignored when caSecret is set.
+  caConfigMap: ""
+  # -- Key within caConfigMap holding the PEM bundle.
+  caConfigMapKey: ca-certificates.crt
+
 resources: {}
 nodeSelector: {}
 tolerations: []

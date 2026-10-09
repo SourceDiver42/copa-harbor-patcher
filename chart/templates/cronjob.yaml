@@ -65,6 +65,7 @@ spec:
                 {{- include "copa-harbor.mainSecurityContext" . | nindent 16 }}
               env:
                 {{- include "copa-harbor.commonEnv" . | nindent 16 }}
+                {{- include "copa-harbor.smtpEnv" . | nindent 16 }}
                 {{- with .Values.extraEnv }}
                 {{- toYaml . | nindent 16 }}
                 {{- end }}
@@ -77,6 +78,11 @@ spec:
                   readOnly: true
                 - name: reports
                   mountPath: /data/reports
+                {{- if and .Values.mail.enabled (or .Values.smtp.caSecret .Values.smtp.caConfigMap) }}
+                - name: smtp-ca
+                  mountPath: /etc/smtp-ca
+                  readOnly: true
+                {{- end }}
           volumes:
             {{- include "copa-harbor.sharedVolumes" . | nindent 12 }}
             - name: bulk-config
@@ -85,4 +91,13 @@ spec:
             - name: reports
               persistentVolumeClaim:
                 claimName: {{ include "copa-harbor.fullname" . }}-reports
+            {{- if and .Values.mail.enabled .Values.smtp.caSecret }}
+            - name: smtp-ca
+              secret:
+                secretName: {{ .Values.smtp.caSecret }}
+            {{- else if and .Values.mail.enabled .Values.smtp.caConfigMap }}
+            - name: smtp-ca
+              configMap:
+                name: {{ .Values.smtp.caConfigMap }}
+            {{- end }}
 {{- end }}
